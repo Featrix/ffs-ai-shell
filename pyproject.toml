@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ffs-ai-shell"
+version = "0.1.0"
+description = "The Featrix Foundation Shell (ffs)"
+requires-python = ">=3.10"
+dependencies = [
+    "click>=8.0",
+    "featrixsphere",
+    "rich",
+]
+
+[project.scripts]
+ffs = "ffs.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["ffs*"]
