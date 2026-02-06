@@ -4,8 +4,6 @@ How to use `ffs` to build production-ready ML predictors from CSV data.
 
 ## Setup
 
-### 1. Install ffs
-
 ```bash
 pip install ffs-ai-shell
 # or from source:
@@ -13,30 +11,7 @@ git clone https://github.com/Featrix/ffs-ai-shell.git
 cd ffs-ai-shell && pip install -e .
 ```
 
-### 2. Configure API Access
-
-Create `~/.featrix/config.json`:
-
-```json
-{
-  "server": "https://sphere-api.featrix.com",
-  "cluster": "churro"
-}
-```
-
-Or use environment variables:
-```bash
-export FFS_SERVER="https://sphere-api.featrix.com"
-export FFS_CLUSTER="churro"
-```
-
-Or pass on command line:
-```bash
-ffs --server https://sphere-api.featrix.com --cluster churro model show ...
-```
-
-### 3. Verify Setup
-
+Verify:
 ```bash
 ffs server health
 ```
@@ -108,8 +83,6 @@ ffs predict customer-churn-abc123-def456 --file new_customers.csv --json > predi
 
 ### Global Options
 ```
---server URL      API endpoint (default: https://sphere-api.featrix.com)
---cluster NAME    Compute cluster (burrito, churro)
 --json            Output raw JSON for scripting
 --quiet           Minimal output
 ```
