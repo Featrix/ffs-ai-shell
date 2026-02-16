@@ -115,28 +115,26 @@ def _format_duration(seconds: int) -> str:
     return f"{hours}h{minutes:02d}m"
 
 
-def _job_status_lines(session_info) -> list[str]:
-    """Build status lines from job plan."""
+def _job_status_lines(server_data: dict) -> list[str]:
+    """Build status lines from server response dict (from fm.refresh())."""
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc)
     lines = []
-    for job in session_info.job_plan:
+    job_plan = server_data.get("job_plan", [])
+    jobs = server_data.get("jobs", {})
+    for job in job_plan:
         jtype = job.get("job_type", "?")
         jid = job.get("job_id")
-        if jid and jid in session_info.jobs:
-            j = session_info.jobs[jid]
+        if jid and jid in jobs:
+            j = jobs[jid]
             status = j.get("status", "?")
             progress = j.get("progress", 0)
             created = j.get("created_at", "")
 
-            # Calculate how long this job has been in its current state
             age = ""
             if created:
                 try:
-                    if isinstance(created, str):
-                        created_dt = datetime.fromisoformat(created)
-                    else:
-                        created_dt = created
+                    created_dt = datetime.fromisoformat(created) if isinstance(created, str) else created
                     delta = int((now - created_dt).total_seconds())
                     age = f" ({_format_duration(delta)})"
                 except (ValueError, TypeError):
@@ -146,14 +144,8 @@ def _job_status_lines(session_info) -> list[str]:
             duration = ""
             if finished and created:
                 try:
-                    if isinstance(finished, str):
-                        finished_dt = datetime.fromisoformat(finished)
-                    else:
-                        finished_dt = finished
-                    if isinstance(created, str):
-                        created_dt = datetime.fromisoformat(created)
-                    else:
-                        created_dt = created
+                    finished_dt = datetime.fromisoformat(finished) if isinstance(finished, str) else finished
+                    created_dt = datetime.fromisoformat(created) if isinstance(created, str) else created
                     dur = int((finished_dt - created_dt).total_seconds())
                     duration = f" ({_format_duration(dur)})"
                 except (ValueError, TypeError):
@@ -182,14 +174,14 @@ def _job_status_lines(session_info) -> list[str]:
 @pass_client
 def wait(state: ClientState, model_id, poll_interval, timeout):
     """Wait for model training to complete."""
+    fm = state.client.foundational_model(model_id)
     start = time.time()
     first = True
     while True:
-        session = state.low.get_session_status(model_id)
+        data = fm.refresh()
         elapsed = int(time.time() - start)
 
-        if session.status == "done":
-            fm = state.client.foundational_model(model_id)
+        if fm.status == "done":
             console.print(f"\n[green]Training complete.[/green]")
             if not state.quiet:
                 print_kv({
@@ -201,26 +193,27 @@ def wait(state: ClientState, model_id, poll_interval, timeout):
                 })
             return
 
-        if session.status == "error":
+        if fm.status in ("error", "failed"):
             console.print(f"\n[red]Training failed.[/red]")
-            for j in session.jobs.values():
-                if j.get("status") == "error":
-                    console.print(f"  {j['job_type']}: {j.get('error', 'unknown error')}")
+            jobs = data.get("jobs", {})
+            for j in jobs.values():
+                if j.get("status") in ("error", "failed"):
+                    console.print(f"  {j.get('job_type', '?')}: {j.get('error', 'unknown error')}")
             raise SystemExit(1)
 
         if elapsed > timeout:
-            console.print(f"\n[red]Timeout after {timeout}s. Status: {session.status}[/red]")
+            console.print(f"\n[red]Timeout after {timeout}s. Status: {fm.status}[/red]")
             raise SystemExit(1)
 
         # Clear screen and redraw
+        job_plan = data.get("job_plan", [])
         if not first:
-            # Move cursor up to overwrite previous output
-            n_lines = len(session.job_plan) + 2  # header + blank + jobs
+            n_lines = len(job_plan) + 2
             click.echo(f"\033[{n_lines}A\033[J", nl=False)
         first = False
 
         console.print(f"[bold]Waiting for {model_id}[/bold]  ({_format_duration(elapsed)})")
-        for line in _job_status_lines(session):
+        for line in _job_status_lines(data):
             console.print(line)
 
         time.sleep(poll_interval)
@@ -255,14 +248,9 @@ def extend(state: ClientState, model_id, data_file, epochs):
 def encode(state: ClientState, model_id, record_json, short):
     """Encode a record into the embedding space."""
     record = json.loads(record_json)
-    if short:
-        # OO API encode() doesn't support short — use low-level client
-        result = state.low.encode_records(model_id, record, short=True)
-        print_json(result)
-    else:
-        fm = state.client.foundational_model(model_id)
-        vectors = fm.encode(record)
-        print_json(vectors)
+    fm = state.client.foundational_model(model_id)
+    vectors = fm.encode(record, short=short)
+    print_json(vectors)
 
 
 @model.command()
@@ -315,8 +303,8 @@ def deprecate(state: ClientState, model_id, message, expires):
 @pass_client
 def delete(state: ClientState, model_id):
     """Delete a model."""
-    # Not on OO API yet — use low-level client
-    result = state.low.mark_for_deletion(model_id)
+    fm = state.client.foundational_model(model_id)
+    result = fm.delete()
     if state.output_json:
         print_json(result)
     else:
