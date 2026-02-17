@@ -1,8 +1,15 @@
+import json
+import os
+from pathlib import Path
+
 import click
 
 from ffs.client import pass_client, ClientState
+from ffs.output import print_json, print_kv, console
 from ffs import model_cmd
 from ffs import server_cmd
+
+FEATRIX_CONFIG = Path.home() / ".featrix"
 
 
 @click.group()
@@ -17,5 +24,68 @@ def main(ctx, server, cluster, output_json, quiet):
     ctx.obj = ClientState(server=server, cluster=cluster, output_json=output_json, quiet=quiet)
 
 
-main.add_command(model_cmd.model)
+@main.command()
+@click.option("--api-key", prompt="API key", hide_input=True, help="Featrix API key")
+@click.pass_context
+def login(ctx, api_key):
+    """Authenticate with Featrix and save credentials to ~/.featrix."""
+    # Read existing config if present
+    config = {}
+    if FEATRIX_CONFIG.exists():
+        try:
+            content = FEATRIX_CONFIG.read_text().strip()
+            if content.startswith("{"):
+                config = json.loads(content)
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    config["api_key"] = api_key
+
+    # Preserve base_url if set via --server
+    state = ctx.obj
+    if state.server != "https://sphere-api.featrix.com":
+        config["base_url"] = state.server
+
+    FEATRIX_CONFIG.write_text(json.dumps(config, indent=2) + "\n")
+    FEATRIX_CONFIG.chmod(0o600)
+
+    # Verify the key works
+    try:
+        from featrixsphere.api import FeatrixSphere
+        fs = FeatrixSphere(api_key=api_key, base_url=state.server)
+        fs.health_check()
+        console.print(f"[green]Logged in.[/green] Credentials saved to ~/.featrix")
+    except Exception as e:
+        console.print(f"[yellow]Credentials saved to ~/.featrix[/yellow], but verification failed: {e}")
+
+
+@main.command()
+@pass_client
+def whoami(state: ClientState):
+    """Show current user, org, and API connection info."""
+    health = state.client.health_check()
+    meta = state.client.last_server_metadata or {}
+
+    key_source = "~/.featrix"
+    if os.getenv("FEATRIX_API_KEY"):
+        key_source = "FEATRIX_API_KEY env var"
+
+    info = {}
+    for key in ("user", "user_id", "email", "org", "org_id", "organization", "account"):
+        for src in (health, meta):
+            if key in src:
+                info[key] = src[key]
+
+    info["server"] = state.server
+    if state.cluster:
+        info["cluster"] = state.cluster
+    info["api_key_source"] = key_source
+
+    if state.output_json:
+        print_json(info)
+    else:
+        print_kv(info, title="Featrix Identity")
+
+
+main.add_command(model_cmd.model, "foundation")
 main.add_command(server_cmd.server)

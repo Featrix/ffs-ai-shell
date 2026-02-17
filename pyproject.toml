@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "featrix-shell"
-version = "0.2.0"
+version = "0.3.0"
 description = "The Featrix Foundation Shell (ffs)"
 requires-python = ">=3.10"
 dependencies = [
