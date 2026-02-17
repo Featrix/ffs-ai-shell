@@ -1,6 +1,10 @@
 import json
 import os
+import platform
+import socket
+import webbrowser
 from pathlib import Path
+from urllib.parse import urlencode
 
 import click
 
@@ -10,6 +14,7 @@ from ffs import model_cmd
 from ffs import server_cmd
 
 FEATRIX_CONFIG = Path.home() / ".featrix"
+FEATRIX_UI = "https://featrix-ui.lovable.app"
 
 
 @click.group()
@@ -25,10 +30,35 @@ def main(ctx, server, cluster, output_json, quiet):
 
 
 @main.command()
-@click.option("--api-key", prompt="API key", hide_input=True, help="Featrix API key")
+@click.option("--api-key", default=None, help="Featrix API key (skips browser flow)")
 @click.pass_context
 def login(ctx, api_key):
-    """Authenticate with Featrix and save credentials to ~/.featrix."""
+    """Authenticate with Featrix and save credentials to ~/.featrix.
+
+    Opens the Featrix UI to create an API key if none is provided.
+    """
+    state = ctx.obj
+
+    if not api_key:
+        # Build the deep-link URL with hostname label
+        hostname = socket.gethostname()
+        user = os.getenv("USER") or os.getenv("USERNAME") or "unknown"
+        label = f"{user}@{hostname}"
+        params = urlencode({"create": "true", "label": label})
+        url = f"{FEATRIX_UI}/api-keys?{params}"
+
+        console.print(f"\nOpening Featrix to create an API key for [bold]{label}[/bold]...\n")
+        console.print(f"  {url}\n")
+
+        # Try to open browser; fine if it fails (SSH, headless, etc.)
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+
+        console.print("Copy the API key from the browser and paste it here.\n")
+        api_key = click.prompt("API key", hide_input=True)
+
     # Read existing config if present
     config = {}
     if FEATRIX_CONFIG.exists():
@@ -41,8 +71,6 @@ def login(ctx, api_key):
 
     config["api_key"] = api_key
 
-    # Preserve base_url if set via --server
-    state = ctx.obj
     if state.server != "https://sphere-api.featrix.com":
         config["base_url"] = state.server
 
