@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "featrix-shell"
-version = "0.5.0"
+version = "0.5.1"
 description = "The Featrix Foundation Shell (ffs)"
 requires-python = ">=3.10"
 dependencies = [
@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-ffs = "ffs.cli:main"
+ffs = "ffs.cli:cli"
 
 [tool.setuptools.packages.find]
 include = ["ffs*"]

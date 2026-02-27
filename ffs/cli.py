@@ -125,3 +125,17 @@ def upgrade():
 
 main.add_command(model_cmd.model, "foundation")
 main.add_command(server_cmd.server)
+
+
+def cli():
+    """Entry point that catches exceptions cleanly."""
+    try:
+        main(standalone_mode=False)
+    except click.ClickException as e:
+        console.print(f"[red]Error:[/red] {e.format_message()}")
+        sys.exit(e.exit_code)
+    except SystemExit:
+        raise
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
