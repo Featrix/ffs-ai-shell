@@ -91,28 +91,21 @@ def login(ctx, api_key):
 @pass_client
 def whoami(state: ClientState):
     """Show current user, org, and API connection info."""
-    health = state.client.health_check()
-    meta = state.client.last_server_metadata or {}
+    identity = state.client.whoami()
 
     key_source = "~/.featrix"
     if os.getenv("FEATRIX_API_KEY"):
         key_source = "FEATRIX_API_KEY env var"
 
-    info = {}
-    for key in ("user", "user_id", "email", "org", "org_id", "organization", "account"):
-        for src in (health, meta):
-            if key in src:
-                info[key] = src[key]
-
-    info["server"] = state.server
+    identity["server"] = state.server
     if state.cluster:
-        info["cluster"] = state.cluster
-    info["api_key_source"] = key_source
+        identity["cluster"] = state.cluster
+    identity["api_key_source"] = key_source
 
     if state.output_json:
-        print_json(info)
+        print_json(identity)
     else:
-        print_kv(info, title="Featrix Identity")
+        print_kv(identity, title="Featrix Identity")
 
 
 main.add_command(model_cmd.model, "foundation")
