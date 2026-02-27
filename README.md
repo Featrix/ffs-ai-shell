@@ -11,8 +11,32 @@ pip install featrix-shell
 ## Setup
 
 ```bash
-ffs login          # prompts for API key, saves to ~/.featrix
-ffs whoami         # verify identity and connection
+ffs login            # save API key to ./.featrix (project-local)
+ffs login --global   # save API key to ~/.featrix (user-wide)
+ffs whoami           # verify identity and connection
+ffs upgrade          # upgrade featrix-shell and featrixsphere
+```
+
+## Configuration
+
+ffs looks for a `.featrix` file starting from the current directory and walking
+up to `$HOME`. This lets you use different API keys per project:
+
+```
+~/work/client-a/.featrix    <- ffs uses this key when you're in client-a/
+~/work/client-b/.featrix    <- ffs uses this key when you're in client-b/
+~/.featrix                  <- fallback for everything else
+```
+
+Search order:
+1. `FEATRIX_API_KEY` environment variable (always wins)
+2. `.featrix` in current directory
+3. `.featrix` in each parent directory up to `$HOME`
+4. `~/.featrix`
+
+The file is JSON:
+```json
+{"api_key": "sk_live_..."}
 ```
 
 ## CLI
@@ -31,8 +55,9 @@ ffs [global-options] <command> [subcommand] [options] [args]
 
 ### Authentication
 ```
-ffs login                                   Save API key to ~/.featrix
+ffs login [--global]                        Save API key (project-local or ~/.featrix)
 ffs whoami                                  Show current user/org/connection
+ffs upgrade                                 Upgrade featrix-shell and featrixsphere
 ```
 
 ### Foundation (Foundational Models / Embedding Spaces)

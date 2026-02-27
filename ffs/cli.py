@@ -1,19 +1,18 @@
 import json
 import os
-import platform
 import socket
+import subprocess
+import sys
 import webbrowser
 from pathlib import Path
 from urllib.parse import urlencode
 
 import click
 
-from ffs.client import pass_client, ClientState
+from ffs.client import pass_client, ClientState, find_featrix_config, load_config_from
 from ffs.output import print_json, print_kv, console
 from ffs import model_cmd
 from ffs import server_cmd
-
-FEATRIX_CONFIG = Path.home() / ".featrix"
 FEATRIX_UI = "https://featrix-ui.lovable.app"
 
 
@@ -31,16 +30,17 @@ def main(ctx, server, cluster, output_json, quiet):
 
 @main.command()
 @click.option("--api-key", default=None, help="Featrix API key (skips browser flow)")
+@click.option("--global", "save_global", is_flag=True, help="Save to ~/.featrix instead of ./.featrix")
 @click.pass_context
-def login(ctx, api_key):
-    """Authenticate with Featrix and save credentials to ~/.featrix.
+def login(ctx, api_key, save_global):
+    """Authenticate with Featrix and save credentials.
 
-    Opens the Featrix UI to create an API key if none is provided.
+    Saves to .featrix in the current directory (project-local) by default.
+    Use --global to save to ~/.featrix instead.
     """
     state = ctx.obj
 
     if not api_key:
-        # Build the deep-link URL with hostname label
         hostname = socket.gethostname()
         user = os.getenv("USER") or os.getenv("USERNAME") or "unknown"
         label = f"{user}@{hostname}"
@@ -50,7 +50,6 @@ def login(ctx, api_key):
         console.print(f"\nOpening Featrix to create an API key for [bold]{label}[/bold]...\n")
         console.print(f"  {url}\n")
 
-        # Try to open browser; fine if it fails (SSH, headless, etc.)
         try:
             webbrowser.open(url)
         except Exception:
@@ -59,13 +58,13 @@ def login(ctx, api_key):
         console.print("Copy the API key from the browser and paste it here.\n")
         api_key = click.prompt("API key", hide_input=True)
 
+    config_path = Path.home() / ".featrix" if save_global else Path.cwd() / ".featrix"
+
     # Read existing config if present
     config = {}
-    if FEATRIX_CONFIG.exists():
+    if config_path.exists():
         try:
-            content = FEATRIX_CONFIG.read_text().strip()
-            if content.startswith("{"):
-                config = json.loads(content)
+            config = load_config_from(config_path)
         except (json.JSONDecodeError, OSError):
             pass
 
@@ -74,17 +73,17 @@ def login(ctx, api_key):
     if state.server != "https://sphere-api.featrix.com":
         config["base_url"] = state.server
 
-    FEATRIX_CONFIG.write_text(json.dumps(config, indent=2) + "\n")
-    FEATRIX_CONFIG.chmod(0o600)
+    config_path.write_text(json.dumps(config, indent=2) + "\n")
+    config_path.chmod(0o600)
 
     # Verify the key works
     try:
         from featrixsphere.api import FeatrixSphere
         fs = FeatrixSphere(api_key=api_key, base_url=state.server)
         fs.health_check()
-        console.print(f"[green]Logged in.[/green] Credentials saved to ~/.featrix")
+        console.print(f"[green]Logged in.[/green] Credentials saved to {config_path}")
     except Exception as e:
-        console.print(f"[yellow]Credentials saved to ~/.featrix[/yellow], but verification failed: {e}")
+        console.print(f"[yellow]Credentials saved to {config_path}[/yellow], but verification failed: {e}")
 
 
 @main.command()
@@ -93,9 +92,10 @@ def whoami(state: ClientState):
     """Show current user, org, and API connection info."""
     identity = state.client.whoami()
 
-    key_source = "~/.featrix"
     if os.getenv("FEATRIX_API_KEY"):
         key_source = "FEATRIX_API_KEY env var"
+    else:
+        key_source = state.config_source
 
     identity["server"] = state.server
     if state.cluster:
@@ -106,6 +106,21 @@ def whoami(state: ClientState):
         print_json(identity)
     else:
         print_kv(identity, title="Featrix Identity")
+
+
+@main.command()
+def upgrade():
+    """Upgrade featrix-shell and featrixsphere to latest."""
+    for pkg in ("featrix-shell", "featrixsphere"):
+        console.print(f"Upgrading [bold]{pkg}[/bold]...")
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--upgrade", pkg],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            console.print(f"  [green]done[/green]")
+        else:
+            console.print(f"  [red]failed[/red]: {result.stderr.strip()}")
 
 
 main.add_command(model_cmd.model, "foundation")
