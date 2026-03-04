@@ -95,13 +95,54 @@ def columns(state: ClientState, model_id):
             console.print(col)
 
 
+_MODEL_CARD_HTML = """\
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Model Card</title></head>
+<body>
+<div id="model-card"></div>
+<script src="https://bits.featrix.com/js/featrix-modelcard/model-card.js"></script>
+<script>
+var data = %s;
+document.getElementById('model-card').innerHTML = FeatrixModelCard.renderHTML(data);
+FeatrixModelCard.attachEventListeners();
+</script>
+</body></html>
+"""
+
+
 @model.command()
 @click.argument("model_id")
+@click.option("--url", "show_url", is_flag=True, help="Print the model card API URL")
+@click.option("--open", "open_browser", is_flag=True, help="Render HTML and open in browser")
+@click.option("--save", "save_path", default=None, type=click.Path(), help="Save rendered HTML to file")
 @pass_client
-def card(state: ClientState, model_id):
+def card(state: ClientState, model_id, show_url, open_browser, save_path):
     """Show the model card."""
+    if show_url:
+        url = f"{state.server}/compute/session/{model_id}/model_card"
+        click.echo(url)
+        return
+
     fm = state.client.foundational_model(model_id)
-    print_json(fm.get_model_card())
+    card_data = fm.get_model_card()
+
+    if open_browser or save_path:
+        html = _MODEL_CARD_HTML % json.dumps(card_data, default=str)
+        if save_path:
+            with open(save_path, "w") as f:
+                f.write(html)
+            console.print(f"[green]Saved:[/green] {save_path}")
+        if open_browser:
+            import tempfile
+            import webbrowser
+            tmp = tempfile.NamedTemporaryFile(suffix=".html", delete=False, mode="w")
+            tmp.write(html)
+            tmp.close()
+            webbrowser.open(f"file://{tmp.name}")
+            console.print(f"[green]Opened in browser.[/green]")
+        return
+
+    print_json(card_data)
 
 
 def _format_duration(seconds: int) -> str:
