@@ -24,7 +24,7 @@ def create(state: ClientState, name, data_file, epochs, ignore_columns):
     ignore = [c.strip() for c in ignore_columns.split(",")] if ignore_columns else None
     fm = state.client.create_foundational_model(
         name=name,
-        csv_file=data_file,
+        data_file=data_file,
         ignore_columns=ignore,
         epochs=epochs,
         session_name_prefix=name,

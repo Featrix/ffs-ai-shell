@@ -12,6 +12,8 @@ import click
 from ffs.client import pass_client, ClientState, find_featrix_config, load_config_from
 from ffs.output import print_json, print_kv, console
 from ffs import model_cmd
+from ffs import predictor_cmd
+from ffs import predict_cmd
 from ffs import server_cmd
 FEATRIX_UI = "https://featrix-ui.lovable.app"
 
@@ -124,6 +126,8 @@ def upgrade():
 
 
 main.add_command(model_cmd.model, "foundation")
+main.add_command(predictor_cmd.predictor)
+main.add_command(predict_cmd.predict)
 main.add_command(server_cmd.server)
 
 

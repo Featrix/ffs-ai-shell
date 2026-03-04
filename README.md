@@ -76,18 +76,18 @@ ffs foundation deprecate MODEL_ID --message MSG --expires DATE
 ffs foundation delete MODEL_ID
 ```
 
-### Predictors (not yet implemented)
+### Predictors
 ```
-ffs predictor create MODEL_ID --target COLUMN --type {set,scalar}
+ffs predictor create MODEL_ID --target-column COL --type {classifier,regressor} [--labels FILE] [--name NAME] [--epochs N]
 ffs predictor list MODEL_ID
-ffs predictor show PREDICTOR_ID
-ffs predictor metrics PREDICTOR_ID
+ffs predictor show MODEL_ID
 ```
 
-### Predict (not yet implemented)
+### Predict
 ```
-ffs predict MODEL_ID RECORD_JSON [--target COLUMN]
-ffs predict MODEL_ID --file FILE [--target COLUMN]
+ffs predict MODEL_ID '{"col": "val"}'                          Single prediction (JSON)
+ffs predict MODEL_ID --file FILE [--target-column COL]         Batch (CSV, JSON, Parquet)
+ffs predict MODEL_ID '{"col": "val"}' --explain                Include feature importance
 ```
 
 ### Vector Database (not yet implemented)
@@ -110,14 +110,20 @@ ffs login
 # Create a foundational model from CSV
 ffs foundation create --name "customers" --data customers.csv
 
-# Wait for training
-ffs foundation wait customers-abc123
+# Wait for foundation training
+ffs foundation wait MODEL_ID
 
-# Show model details
-ffs foundation show customers-abc123
+# Train a classifier on a target column
+ffs predictor create MODEL_ID --target-column churned --type classifier
 
-# Encode a record into the embedding space
-ffs foundation encode customers-abc123 '{"age": 35, "income": 50000}'
+# Wait for predictor training (same wait command)
+ffs foundation wait MODEL_ID
+
+# Single prediction
+ffs predict MODEL_ID '{"age": 35, "income": 50000}'
+
+# Batch prediction from file
+ffs predict MODEL_ID --file new_customers.csv
 ```
 
 ## Architecture
