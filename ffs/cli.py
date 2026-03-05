@@ -15,6 +15,7 @@ from ffs import model_cmd
 from ffs import predictor_cmd
 from ffs import predict_cmd
 from ffs import server_cmd
+from ffs import train_cmd
 FEATRIX_UI = "https://featrix-ui.lovable.app"
 
 
@@ -168,6 +169,7 @@ def completions(shell):
 main.add_command(model_cmd.model, "foundation")
 main.add_command(predictor_cmd.predictor)
 main.add_command(predict_cmd.predict)
+main.add_command(train_cmd.train)
 main.add_command(server_cmd.server)
 
 
