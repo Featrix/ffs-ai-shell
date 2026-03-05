@@ -1,6 +1,8 @@
 """ffs model subcommands."""
 import json
 import time
+from datetime import datetime, timezone
+
 import click
 
 from ffs.client import pass_client, ClientState
@@ -156,55 +158,71 @@ def _format_duration(seconds: int) -> str:
     return f"{hours}h{minutes:02d}m"
 
 
+def _format_job_line(j: dict, jtype: str, now) -> str:
+    """Format a single job into a status line."""
+    status = j.get("status", "?")
+    progress = j.get("progress", 0)
+    created = j.get("created_at", "")
+
+    age = ""
+    if created:
+        try:
+            created_dt = datetime.fromisoformat(created) if isinstance(created, str) else created
+            delta = int((now - created_dt).total_seconds())
+            age = f" ({_format_duration(delta)})"
+        except (ValueError, TypeError):
+            pass
+
+    finished = j.get("finished_at", "")
+    duration = ""
+    if finished and created:
+        try:
+            finished_dt = datetime.fromisoformat(finished) if isinstance(finished, str) else finished
+            created_dt = datetime.fromisoformat(created) if isinstance(created, str) else created
+            dur = int((finished_dt - created_dt).total_seconds())
+            duration = f" ({_format_duration(dur)})"
+        except (ValueError, TypeError):
+            pass
+
+    queue = j.get("queue", "")
+    queue_str = f" [{queue}]" if queue and status != "done" else ""
+
+    if status == "done":
+        return f"  [green]done[/green]  {jtype}{duration}"
+    elif status == "running" and progress:
+        return f"  [yellow]running {progress}%[/yellow]  {jtype}{queue_str}{age}"
+    elif status == "running":
+        return f"  [yellow]running[/yellow]  {jtype}{queue_str}{age}"
+    else:
+        return f"  [dim]{status}[/dim]  {jtype}{queue_str}{age}"
+
+
 def _job_status_lines(server_data: dict) -> list[str]:
     """Build status lines from server response dict (from fm.refresh())."""
-    from datetime import datetime, timezone
     now = datetime.now(timezone.utc)
     lines = []
     job_plan = server_data.get("job_plan", [])
     jobs = server_data.get("jobs", {})
+
+    # Track which job IDs are covered by the plan
+    planned_ids = set()
+
     for job in job_plan:
         jtype = job.get("job_type", "?")
         jid = job.get("job_id")
+        if jid:
+            planned_ids.add(jid)
         if jid and jid in jobs:
-            j = jobs[jid]
-            status = j.get("status", "?")
-            progress = j.get("progress", 0)
-            created = j.get("created_at", "")
-
-            age = ""
-            if created:
-                try:
-                    created_dt = datetime.fromisoformat(created) if isinstance(created, str) else created
-                    delta = int((now - created_dt).total_seconds())
-                    age = f" ({_format_duration(delta)})"
-                except (ValueError, TypeError):
-                    pass
-
-            finished = j.get("finished_at", "")
-            duration = ""
-            if finished and created:
-                try:
-                    finished_dt = datetime.fromisoformat(finished) if isinstance(finished, str) else finished
-                    created_dt = datetime.fromisoformat(created) if isinstance(created, str) else created
-                    dur = int((finished_dt - created_dt).total_seconds())
-                    duration = f" ({_format_duration(dur)})"
-                except (ValueError, TypeError):
-                    pass
-
-            queue = j.get("queue", "")
-            queue_str = f" [{queue}]" if queue and status != "done" else ""
-
-            if status == "done":
-                lines.append(f"  [green]done[/green]  {jtype}{duration}")
-            elif status == "running" and progress:
-                lines.append(f"  [yellow]running {progress}%[/yellow]  {jtype}{queue_str}{age}")
-            elif status == "running":
-                lines.append(f"  [yellow]running[/yellow]  {jtype}{queue_str}{age}")
-            else:
-                lines.append(f"  [dim]{status}[/dim]  {jtype}{queue_str}{age}")
+            lines.append(_format_job_line(jobs[jid], jtype, now))
         else:
             lines.append(f"  [dim]pending[/dim]  {jtype}")
+
+    # Show jobs that exist but aren't in the plan yet
+    for jid, j in jobs.items():
+        if jid not in planned_ids:
+            jtype = j.get("job_type", "?")
+            lines.append(_format_job_line(j, jtype, now))
+
     return lines
 
 
@@ -218,6 +236,7 @@ def wait(state: ClientState, model_id, poll_interval, timeout):
     fm = state.client.foundational_model(model_id)
     start = time.time()
     first = True
+    prev_lines = 1
     while True:
         data = fm.refresh()
         elapsed = int(time.time() - start)
@@ -246,15 +265,30 @@ def wait(state: ClientState, model_id, poll_interval, timeout):
             console.print(f"\n[red]Timeout after {timeout}s. Status: {fm.status}[/red]")
             raise SystemExit(1)
 
-        # Clear screen and redraw
+        # Build output lines
         job_plan = data.get("job_plan", [])
-        if not first:
-            n_lines = len(job_plan) + 2
-            click.echo(f"\033[{n_lines}A\033[J", nl=False)
-        first = False
+        status_lines = _job_status_lines(data)
+        extra_lines = []
 
-        console.print(f"[bold]Waiting for {model_id}[/bold]  ({_format_duration(elapsed)})")
-        for line in _job_status_lines(data):
+        if not job_plan and not status_lines:
+            # No jobs scheduled yet — show what we know
+            session = data.get("session", data)
+            sess_status = session.get("status", fm.status or "unknown")
+            extra_lines.append(f"  [dim]Session status: {sess_status}[/dim]")
+            if sess_status in ("new", "uploading", "uploaded", "queued"):
+                extra_lines.append(f"  [dim]Waiting for jobs to be scheduled...[/dim]")
+
+        # Clear screen and redraw
+        total_lines = len(status_lines) + len(extra_lines) + 1
+        if not first:
+            click.echo(f"\033[{prev_lines}A\033[J", nl=False)
+        first = False
+        prev_lines = total_lines
+
+        console.print(f"[bold]{model_id}[/bold]  [dim]{fm.status or '?'}[/dim]  ({_format_duration(elapsed)})")
+        for line in status_lines:
+            console.print(line)
+        for line in extra_lines:
             console.print(line)
 
         time.sleep(poll_interval)
