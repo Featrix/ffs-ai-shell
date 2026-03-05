@@ -19,8 +19,8 @@ FEATRIX_UI = "https://featrix-ui.lovable.app"
 
 
 @click.group()
-@click.option("--server", envvar="FFS_SERVER", default="https://sphere-api.featrix.com", help="API server URL")
-@click.option("--cluster", envvar="FFS_CLUSTER", default=None, help="Compute cluster name")
+@click.option("--server", envvar="FFS_SERVER", default="https://sphere-api.featrix.com", hidden=True, help="API server URL")
+@click.option("--cluster", envvar="FFS_CLUSTER", default=None, hidden=True, help="Compute cluster name")
 @click.option("--json", "output_json", is_flag=True, help="Output raw JSON")
 @click.option("--quiet", is_flag=True, help="Minimal output")
 @click.pass_context
@@ -123,6 +123,19 @@ def upgrade():
             console.print(f"  [green]done[/green]")
         else:
             console.print(f"  [red]failed[/red]: {result.stderr.strip()}")
+
+
+@main.command()
+@click.option("--shell", "shell", default="bash", type=click.Choice(["bash", "zsh", "fish"]), help="Shell type")
+def completions(shell):
+    """Print shell completion script.
+
+    Activate with:  eval "$(ffs completions)"
+    """
+    from click.shell_completion import get_completion_class
+    comp_cls = get_completion_class(shell)
+    comp = comp_cls(main, {}, "ffs", "_FFS_COMPLETE")
+    click.echo(comp.source())
 
 
 main.add_command(model_cmd.model, "foundation")
