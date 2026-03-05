@@ -18,7 +18,22 @@ from ffs import server_cmd
 FEATRIX_UI = "https://featrix-ui.lovable.app"
 
 
-@click.group()
+def _completions_installed():
+    """Check if shell tab completion appears to be set up."""
+    home = Path.home()
+    for rc in (".bashrc", ".bash_profile", ".zshrc", ".profile"):
+        rc_path = home / rc
+        if rc_path.is_file():
+            try:
+                content = rc_path.read_text()
+                if "ffs completions" in content or "_ffs_completion" in content:
+                    return True
+            except OSError:
+                pass
+    return False
+
+
+@click.group(invoke_without_command=True)
 @click.option("--server", envvar="FFS_SERVER", default="https://sphere-api.featrix.com", hidden=True, help="API server URL")
 @click.option("--cluster", envvar="FFS_CLUSTER", default=None, hidden=True, help="Compute cluster name")
 @click.option("--json", "output_json", is_flag=True, help="Output raw JSON")
@@ -28,6 +43,14 @@ def main(ctx, server, cluster, output_json, quiet):
     """The Featrix Foundation Shell."""
     ctx.ensure_object(dict)
     ctx.obj = ClientState(server=server, cluster=cluster, output_json=output_json, quiet=quiet)
+
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help())
+        if not _completions_installed():
+            console.print()
+            console.print("[bold cyan]Tip:[/bold cyan] Enable tab completion for ffs:")
+            console.print("  [green]echo 'eval \"$(ffs completions)\"' >> ~/.bashrc[/green]")
+            console.print("  [dim]For zsh: replace .bashrc with .zshrc[/dim]")
 
 
 @main.command()
@@ -111,12 +134,16 @@ def whoami(state: ClientState):
 
 
 @main.command()
-def upgrade():
+@click.option("--break-system-packages", is_flag=True, hidden=True, help="Pass --break-system-packages to pip")
+def upgrade(break_system_packages):
     """Upgrade featrix-shell and featrixsphere to latest."""
     for pkg in ("featrix-shell", "featrixsphere"):
         console.print(f"Upgrading [bold]{pkg}[/bold]...")
+        cmd = [sys.executable, "-m", "pip", "install", "--upgrade", pkg]
+        if break_system_packages:
+            cmd.append("--break-system-packages")
         result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--upgrade", pkg],
+            cmd,
             capture_output=True, text=True,
         )
         if result.returncode == 0:

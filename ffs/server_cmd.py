@@ -19,4 +19,13 @@ def health(state: ClientState):
     if state.output_json:
         print_json(result)
     else:
-        print_kv(result, title="Server Health")
+        status = result.get("status", "unknown")
+        version = result.get("version", "?")
+        color = "green" if status == "healthy" else "red"
+        console.print(f"[{color}]{status}[/{color}]  v{version}")
+        nodes = result.get("nodes", {})
+        for name, info in sorted(nodes.items()):
+            nstatus = info.get("status", "?")
+            nversion = info.get("version", "?")
+            nc = "green" if nstatus == "healthy" else "red"
+            console.print(f"  [{nc}]{name}[/{nc}]  v{nversion}")
