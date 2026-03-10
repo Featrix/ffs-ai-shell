@@ -2,14 +2,14 @@
 import json
 
 import click
-import pandas as pd
 
 from ffs.client import pass_client, ClientState
 from ffs.output import print_json, print_kv, print_list_table, console
 
 
-def _read_data_file(path: str) -> pd.DataFrame:
+def _read_data_file(path: str):
     """Read CSV, JSON, or Parquet into a DataFrame."""
+    import pandas as pd
     lower = path.lower()
     if lower.endswith(".csv"):
         return pd.read_csv(path)
