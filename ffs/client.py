@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -7,10 +8,24 @@ import click
 from featrixsphere.api import FeatrixSphere
 
 
+def _is_git_tracked(filepath: Path) -> bool:
+    """Check if a file is tracked by git."""
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", str(filepath)],
+            cwd=str(filepath.parent),
+            capture_output=True,
+        )
+        return result.returncode == 0
+    except (OSError, FileNotFoundError):
+        return False
+
+
 def find_featrix_config() -> tuple[Path | None, str]:
     """Walk from cwd up to / looking for .featrix, fall back to ~/.featrix.
 
     Returns (path, source) where source describes where it was found.
+    Raises click.ClickException if a .featrix file is tracked by git.
     """
     cwd = Path.cwd()
     home = Path.home()
@@ -19,6 +34,17 @@ def find_featrix_config() -> tuple[Path | None, str]:
     for d in [cwd, *cwd.parents]:
         candidate = d / ".featrix"
         if candidate.is_file():
+            if d != home and _is_git_tracked(candidate):
+                raise click.ClickException(
+                    f"\n\n"
+                    f"  DANGER: {candidate} is tracked by git!\n\n"
+                    f"  Your API key will be pushed to the remote repository.\n"
+                    f"  Fix this now:\n\n"
+                    f"    git rm --cached {candidate}\n"
+                    f"    echo .featrix >> .gitignore\n"
+                    f"    git commit -m 'Remove .featrix from tracking'\n\n"
+                    f"  Then rotate your API key at https://featrix-ui.lovable.app/api-keys\n"
+                )
             if d == home:
                 return candidate, "~/.featrix"
             return candidate, str(candidate)

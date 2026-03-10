@@ -1,0 +1,237 @@
+# ffs — Featrix Foundation Shell
+# Agent Reference Guide
+#
+# This document is designed for AI agents and automation tools.
+# Run `ffs agent-help` to print this at any time.
+
+## Quick Start
+
+```bash
+# Authenticate (saves to ./.featrix, project-scoped)
+ffs login --api-key YOUR_KEY
+
+# Verify identity
+ffs whoami
+
+# Create a foundational model from data
+ffs foundation create --name my-model --data train.csv
+
+# Wait for training (exits 0 on success, 1 on failure/timeout)
+ffs foundation wait SESSION_ID --timeout 7200
+
+# Train a classifier on the embedding space
+ffs predictor create SESSION_ID --target-column label --type classifier
+
+# Wait for predictor training
+ffs foundation wait PREDICTOR_SESSION_ID
+
+# Make a prediction
+ffs predict PREDICTOR_SESSION_ID '{"col1": "val1", "col2": 42}'
+
+# Batch predict from file
+ffs predict PREDICTOR_SESSION_ID --file test.csv
+```
+
+## Global Flags
+
+--json          Machine-readable JSON output on ALL commands
+--quiet         Suppress verbose output (exit codes still work)
+--server URL    Override API server (env: FFS_SERVER)
+--cluster NAME  Override compute cluster (env: FFS_CLUSTER)
+
+Always use `ffs --json <command>` for automation. Never parse human-formatted output.
+
+## Commands Reference
+
+### Authentication
+
+ffs login [--api-key KEY] [--global]
+  Authenticate and save credentials.
+  --api-key KEY    Provide key directly (no browser)
+  --global         Save to ~/.featrix instead of ./.featrix
+  Exit: 0 on success
+
+ffs whoami
+  Show current user, org, API key source.
+  JSON fields: user, org, server, api_key_source
+  Exit: 0 on success, 1 if not authenticated
+
+### Foundation Models
+
+ffs foundation create --name NAME --data FILE [--epochs N] [--ignore-columns "a,b"]
+  Create a new foundational model from CSV/JSON/Parquet.
+  JSON output: {"model_id": "...", "status": "..."}
+  Exit: 0 on success
+
+ffs foundation list [--prefix NAME]
+  List all model session IDs, optionally filtered by name prefix.
+  JSON output: ["session_id_1", "session_id_2", ...]
+  Exit: 0 on success
+
+ffs foundation show MODEL_ID
+  Show model details (status, dimensions, epochs, loss).
+  JSON fields: model_id, name, status, dimensions, epochs, final_loss
+  Exit: 0 on success
+
+ffs foundation columns MODEL_ID
+  List columns in the model's embedding space.
+  JSON output: ["col1", "col2", ...]
+  Exit: 0 on success
+
+ffs foundation card MODEL_ID [--url] [--open] [--save FILE]
+  Get the model card (JSON by default).
+  --url   Print the API URL for the model card
+  --save  Render HTML and save to file
+  Exit: 0 on success
+
+ffs foundation wait MODEL_ID [--timeout 3600] [--poll-interval 10]
+  Block until training completes.
+  Exit: 0 = done, 1 = failed/timeout
+  IMPORTANT: Always set --timeout for automation.
+
+ffs foundation extend MODEL_ID --data FILE [--epochs N]
+  Extend a model with new data (creates new session).
+  JSON output: {"model_id": "NEW_ID", "parent_model_id": "OLD_ID", "status": "..."}
+  Exit: 0 on success
+
+ffs foundation encode MODEL_ID '{"col": "val"}' [--short]
+  Encode a record into the embedding space.
+  --short returns 3D vectors for visualization.
+  JSON output: vector array
+  Exit: 0 on success
+
+ffs foundation publish MODEL_ID --org ORG_ID [--name NAME]
+  Publish a model.
+  Exit: 0 on success
+
+ffs foundation unpublish MODEL_ID
+  Unpublish a model.
+  Exit: 0 on success
+
+ffs foundation deprecate MODEL_ID --message MSG --expires DATE
+  Deprecate a model with warning and expiration.
+  Exit: 0 on success
+
+ffs foundation delete MODEL_ID --yes
+  Delete a model. REQUIRES --yes for non-interactive use.
+  Exit: 0 on success
+
+### Predictors
+
+ffs predictor create MODEL_ID --target-column COL --type classifier|regressor [--labels FILE] [--name NAME] [--epochs N]
+  Train a predictor on a foundation model.
+  --labels FILE joins external labels (creates new session).
+  JSON output: {"predictor_id": "...", "session_id": "...", "target_column": "...", "type": "...", "status": "..."}
+  Exit: 0 on success
+
+ffs predictor list MODEL_ID
+  List predictors for a foundation.
+  JSON output: [{"id": "...", "target_column": "...", "target_type": "...", "status": "...", "accuracy": ...}]
+  Exit: 0 on success
+
+ffs predictor show PREDICTOR_ID
+  Show predictor details and metrics.
+  JSON fields: id, session_id, target_column, target_type, status, accuracy, auc, f1
+  Exit: 0 on success
+
+### Training (New Sessions)
+
+ffs train model ES_SESSION_ID --target-column COL --type classifier|regressor --data FILE [--name NAME] [--epochs N]
+  Train a predictor on an existing embedding space in a NEW session.
+  Does NOT modify the parent ES.
+  JSON output: {"predictor_id": "...", "session_id": "...", "es_session_id": "...", ...}
+  Exit: 0 on success
+
+### Predictions
+
+ffs predict MODEL_ID '{"col": "val"}'
+  Single prediction from JSON record.
+  JSON output: {predicted_class, confidence, probability, probabilities, prediction_uuid, ...}
+  Exit: 0 on success
+
+ffs predict MODEL_ID --file data.csv [--target-column COL] [--explain]
+  Batch predict from CSV/JSON/Parquet file.
+  --target-column selects predictor when multiple exist.
+  --explain includes feature importance scores.
+  JSON output: [{predicted_class, confidence, ...}, ...]
+  Exit: 0 on success
+
+### Server
+
+ffs server health
+  Check API server health and node status.
+  JSON output: {"status": "healthy", "version": "...", "nodes": {...}}
+  Exit: 0 on success
+
+### Utilities
+
+ffs upgrade [--break-system-packages]
+  Upgrade featrix-shell and featrixsphere packages.
+  Exit: 0 always (individual failures are non-fatal)
+
+ffs completions [--shell bash|zsh|fish]
+  Print shell completion script.
+  Usage: eval "$(ffs completions)"
+
+ffs agent-help
+  Print this guide.
+
+## Typical Agent Workflow
+
+Step 1: Authenticate
+  ffs login --api-key $FEATRIX_API_KEY
+
+Step 2: Create foundation model
+  ffs --json foundation create --name fraud-v1 --data training_data.csv
+  # Capture model_id from JSON output
+
+Step 3: Wait for training
+  ffs foundation wait $MODEL_ID --timeout 7200
+  # Check exit code: 0 = success, 1 = failure
+
+Step 4: Train a classifier
+  ffs --json predictor create $MODEL_ID --target-column is_fraud --type classifier
+  # Capture session_id from JSON output
+
+Step 5: Wait for predictor training
+  ffs foundation wait $PREDICTOR_SESSION_ID --timeout 3600
+
+Step 6: Make predictions
+  ffs --json predict $PREDICTOR_SESSION_ID '{"amount": 500, "merchant": "Amazon"}'
+
+Step 7: Batch predict
+  ffs --json predict $PREDICTOR_SESSION_ID --file new_transactions.csv
+
+## Credential Resolution Order
+
+1. FEATRIX_API_KEY environment variable (highest priority)
+2. .featrix file in current directory (walk-up search toward ~)
+3. ~/.featrix file (global fallback)
+
+Each project directory can have its own .featrix with its own API key.
+Files are chmod 600 on write. If .featrix is tracked by git, ffs refuses to run.
+
+## Exit Code Contract
+
+0       = success
+1       = failure (API error, training failed, timeout, bad input)
+non-0   = always an error; safe to retry or abort
+
+## Error Format
+
+All errors print: Error: <message>
+No Python tracebacks. Agents can rely on exit codes alone.
+
+## File Formats
+
+Supported: .csv, .json, .parquet
+Unsupported formats are rejected before any API call.
+
+## Safety Properties
+
+- foundation delete requires --yes (no accidental deletion)
+- train model always creates a new session (parent ES untouched)
+- wait has --timeout (never hangs, default 1 hour)
+- Bad input fails before API calls (fast, cheap failure)
+- --json output uses default=str (no serialization crashes)
+- All webbrowser.open() calls are wrapped in try/except

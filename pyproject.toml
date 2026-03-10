@@ -27,3 +27,6 @@ source = ["ffs"]
 
 [tool.setuptools.packages.find]
 include = ["ffs*"]
+
+[tool.setuptools.package-data]
+ffs = ["agent_guide.txt"]

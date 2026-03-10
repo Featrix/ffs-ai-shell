@@ -166,6 +166,14 @@ def completions(shell):
     click.echo(comp.source())
 
 
+@main.command("agent-help")
+def agent_help():
+    """Print the agent reference guide for ffs."""
+    from importlib.resources import files
+    guide = files("ffs").joinpath("agent_guide.txt").read_text()
+    click.echo(guide)
+
+
 main.add_command(model_cmd.model, "foundation")
 main.add_command(predictor_cmd.predictor)
 main.add_command(predict_cmd.predict)
