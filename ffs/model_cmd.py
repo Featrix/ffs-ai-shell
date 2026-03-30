@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import click
 
 from ffs.client import pass_client, ClientState
-from ffs.output import print_json, print_kv, console
+from ffs.output import print_json, print_kv, print_list_table, console
 
 
 @click.group()
@@ -41,17 +41,40 @@ def create(state: ClientState, name, data_file, epochs, ignore_columns):
 
 @model.command("list")
 @click.option("--prefix", default="", help="Filter by name prefix")
+@click.option("--active", is_flag=True, help="Show only active (non-done) sessions")
 @pass_client
-def list_models(state: ClientState, prefix):
+def list_models(state: ClientState, prefix, active):
     """List models."""
     sessions = state.client.list_sessions(name_prefix=prefix)
+    if active:
+        sessions = [s for s in sessions if s.status not in ("done", None)]
     if state.output_json:
-        print_json(sessions)
+        rows = []
+        for s in sessions:
+            rows.append({
+                "id": s.id,
+                "name": s.name,
+                "status": s.status,
+                "dimensions": s.dimensions,
+                "epochs": s.epochs,
+                "final_loss": s.final_loss,
+            })
+        print_json(rows)
     elif not sessions:
         console.print("No models found.")
     else:
-        for sid in sessions:
-            console.print(sid)
+        rows = []
+        for s in sessions:
+            loss = f"{s.final_loss:.4f}" if s.final_loss else "—"
+            rows.append({
+                "ID": s.id,
+                "Name": s.name or "—",
+                "Status": s.status or "—",
+                "Dims": str(s.dimensions) if s.dimensions else "—",
+                "Epochs": str(s.epochs) if s.epochs else "—",
+                "Loss": loss,
+            })
+        print_list_table(rows, ["ID", "Name", "Status", "Dims", "Epochs", "Loss"])
 
 
 @model.command()
@@ -190,7 +213,8 @@ def _format_job_line(j: dict, jtype: str, now) -> str:
     if status == "done":
         return f"  [green]done[/green]  {jtype}{duration}"
     elif status == "running" and progress:
-        return f"  [yellow]running {progress}%[/yellow]  {jtype}{queue_str}{age}"
+        pct = progress * 100 if progress <= 1 else progress
+        return f"  [yellow]running {pct:.1f}%[/yellow]  {jtype}{queue_str}{age}"
     elif status == "running":
         return f"  [yellow]running[/yellow]  {jtype}{queue_str}{age}"
     else:
@@ -224,6 +248,62 @@ def _job_status_lines(server_data: dict) -> list[str]:
             lines.append(_format_job_line(j, jtype, now))
 
     return lines
+
+
+@model.command()
+@click.argument("model_id")
+@pass_client
+def jobs(state: ClientState, model_id):
+    """Show current job status for a model (one-shot snapshot)."""
+    fm = state.client.foundational_model(model_id)
+    data = fm.refresh()
+
+    if state.output_json:
+        job_plan = data.get("job_plan", [])
+        job_map = data.get("jobs", {})
+        out = []
+        for entry in job_plan:
+            jid = entry.get("job_id")
+            j = job_map.get(jid, {}) if jid else {}
+            out.append({
+                "job_type": entry.get("job_type"),
+                "job_id": jid,
+                "status": j.get("status"),
+                "progress": j.get("progress"),
+                "queue": j.get("queue"),
+                "created_at": j.get("created_at"),
+                "finished_at": j.get("finished_at"),
+                "error": j.get("error"),
+            })
+        for jid, j in job_map.items():
+            if jid not in {e.get("job_id") for e in job_plan}:
+                out.append({
+                    "job_type": j.get("job_type"),
+                    "job_id": jid,
+                    "status": j.get("status"),
+                    "progress": j.get("progress"),
+                    "queue": j.get("queue"),
+                    "created_at": j.get("created_at"),
+                    "finished_at": j.get("finished_at"),
+                    "error": j.get("error"),
+                })
+        print_json({"model_id": model_id, "status": fm.status, "jobs": out})
+        return
+
+    status_lines = _job_status_lines(data)
+    console.print(f"[bold]{model_id}[/bold]  [dim]{fm.status or '?'}[/dim]")
+    if status_lines:
+        for line in status_lines:
+            console.print(line)
+    else:
+        session = data.get("session", data)
+        sess_status = session.get("status", fm.status or "unknown")
+        console.print(f"  [dim]Session status: {sess_status} — no jobs scheduled yet[/dim]")
+
+    # Show any errors
+    for j in data.get("jobs", {}).values():
+        if j.get("error"):
+            console.print(f"  [red]Error:[/red] {j.get('job_type', '?')}: {j.get('error')}")
 
 
 @model.command()
@@ -293,6 +373,155 @@ def wait(state: ClientState, model_id, poll_interval, timeout):
 
         time.sleep(poll_interval)
 
+
+
+@model.command()
+@click.option("--limit", type=int, default=10, help="Max sessions to show")
+@pass_client
+def recent(state: ClientState, limit):
+    """Show recent sessions with job status."""
+    sessions = state.client.list_sessions()
+    # Sort: active first, then by status
+    status_order = {"running": 0, "training": 0, "queued": 1, "new": 1,
+                    "uploading": 2, "uploaded": 2, "error": 3, "failed": 3, "done": 4}
+    sessions.sort(key=lambda s: status_order.get(s.status or "", 5))
+    sessions = sessions[:limit]
+
+    if state.output_json:
+        out = []
+        for s in sessions:
+            out.append({
+                "id": s.id, "name": s.name, "status": s.status,
+                "dimensions": s.dimensions, "epochs": s.epochs,
+            })
+        print_json(out)
+        return
+
+    if not sessions:
+        console.print("No sessions found.")
+        return
+
+    for s in sessions:
+        name_str = f"  [dim]{s.name}[/dim]" if s.name else ""
+        status = s.status or "?"
+        if status in ("done",):
+            status_fmt = f"[green]{status}[/green]"
+        elif status in ("running", "training"):
+            status_fmt = f"[yellow]{status}[/yellow]"
+        elif status in ("error", "failed"):
+            status_fmt = f"[red]{status}[/red]"
+        else:
+            status_fmt = f"[dim]{status}[/dim]"
+
+        dims = f"  {s.dimensions}d" if s.dimensions else ""
+        console.print(f"{status_fmt}  {s.id}{name_str}{dims}")
+
+
+@model.command("predict")
+@click.argument("model_id")
+@click.argument("target_column")
+@click.argument("record_json", required=False)
+@click.option("--model-type", "model_type", default=None,
+              type=click.Choice(["sp", "foundation", "foundation+xgboost", "foundation+linear"]),
+              help="Force prediction model type (default: auto-route)")
+@click.option("--predictor-id", default=None, help="Use a specific predictor by ID")
+@click.option("--file", "data_file", type=click.Path(exists=True),
+              help="Batch predict from file (CSV, JSON, Parquet)")
+@click.option("--explain", is_flag=True, help="Include feature importance")
+@pass_client
+def model_predict(state: ClientState, model_id, target_column, record_json,
+                  model_type, predictor_id, data_file, explain):
+    """Predict a column on a foundation model.
+
+    \b
+    Auto-routes to SP if trained, otherwise uses foundation+xgboost.
+
+    \b
+    Single:  ffs foundation predict MODEL_ID churned '{"age": 35, "income": 50000}'
+    Batch:   ffs foundation predict MODEL_ID churned --file data.csv
+    Force:   ffs foundation predict MODEL_ID churned '{"age": 35}' --model-type foundation
+    """
+    if not record_json and not data_file:
+        raise click.ClickException("Provide a JSON record or --file")
+
+    fm = state.client.foundational_model(model_id)
+
+    if data_file:
+        import pandas as pd
+        lower = data_file.lower()
+        if lower.endswith(".csv"):
+            df = pd.read_csv(data_file)
+        elif lower.endswith(".json"):
+            df = pd.read_json(data_file)
+        elif lower.endswith(".parquet"):
+            df = pd.read_parquet(data_file)
+        else:
+            raise click.ClickException(f"Unsupported file format (use .csv, .json, or .parquet): {data_file}")
+
+        records = df.to_dict(orient="records")
+        results = []
+        for rec in records:
+            kwargs = {}
+            if model_type:
+                kwargs["model_type"] = model_type
+            if predictor_id:
+                kwargs["predictor_id"] = predictor_id
+            results.append(fm.predict(target_column, rec, **kwargs))
+
+        if state.output_json:
+            print_json([r.to_dict() for r in results])
+        else:
+            console.print(f"[green]{len(results)} predictions[/green]\n")
+            rows = []
+            for i, r in enumerate(results):
+                row = {"#": str(i + 1)}
+                if r.predicted_class is not None:
+                    row["Predicted"] = r.predicted_class
+                elif hasattr(r, "prediction") and r.prediction is not None:
+                    row["Predicted"] = str(r.prediction)
+                if r.confidence is not None:
+                    row["Confidence"] = f"{r.confidence:.3f}"
+                if r.model_type:
+                    row["Model"] = r.model_type
+                rows.append(row)
+            if rows:
+                print_list_table(rows, list(rows[0].keys()))
+        return
+
+    record = json.loads(record_json)
+    kwargs = {}
+    if model_type:
+        kwargs["model_type"] = model_type
+    if predictor_id:
+        kwargs["predictor_id"] = predictor_id
+
+    result = fm.predict(target_column, record, **kwargs)
+
+    if state.output_json:
+        print_json(result.to_dict())
+    else:
+        data = {}
+        if result.predicted_class is not None:
+            data["Predicted"] = result.predicted_class
+        elif hasattr(result, "prediction") and result.prediction is not None:
+            data["Predicted"] = str(result.prediction)
+        if result.confidence is not None:
+            data["Confidence"] = f"{result.confidence:.4f}"
+        if hasattr(result, "probability") and result.probability is not None:
+            data["Probability"] = f"{result.probability:.4f}"
+        if hasattr(result, "probabilities") and result.probabilities:
+            data["Distribution"] = "  ".join(f"{k}: {v:.3f}" for k, v in result.probabilities.items())
+        if result.model_type:
+            data["Model Type"] = result.model_type
+        if result.prediction_uuid:
+            data["Prediction UUID"] = result.prediction_uuid
+        if explain and hasattr(result, "feature_importance") and result.feature_importance:
+            data["Feature Importance"] = ""
+            print_kv(data, title="Prediction")
+            for col, score in result.feature_importance.items():
+                console.print(f"  {col}: {score:.4f}")
+        else:
+            print_kv(data, title="Prediction")
 
 
 @model.command()
