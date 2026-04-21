@@ -174,7 +174,8 @@ def agent_help():
     click.echo(guide)
 
 
-main.add_command(model_cmd.model, "foundation")
+main.add_command(model_cmd.model, "models")
+main.add_command(model_cmd.model, "foundation")  # legacy alias
 main.add_command(predictor_cmd.predictor)
 main.add_command(predict_cmd.predict)
 main.add_command(train_cmd.train)

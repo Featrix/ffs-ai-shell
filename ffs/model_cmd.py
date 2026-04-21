@@ -77,33 +77,96 @@ def list_models(state: ClientState, prefix, active):
         print_list_table(rows, ["ID", "Name", "Status", "Dims", "Epochs", "Loss"])
 
 
+def _show_one_model(state, fm):
+    """Show details for a single model, including predictors."""
+    # Refresh to get full server data (dimensions, epochs, loss, etc.)
+    server_data = fm.refresh()
+    session = server_data.get("session", server_data)
+    model_info = session.get("model_info", {})
+    training_stats = session.get("training_stats", {})
+
+    predictors = []
+    try:
+        predictors = fm.list_predictors()
+    except Exception:
+        pass
+
+    # Extract parameter count from model_info if available
+    num_params = model_info.get("num_parameters") or model_info.get("n_parameters") or model_info.get("total_parameters")
+    num_columns = model_info.get("num_columns")
+
+    if state.output_json:
+        data = {
+            "model_id": fm.id,
+            "name": fm.name,
+            "status": fm.status,
+            "dimensions": fm.dimensions,
+            "epochs": fm.epochs,
+            "final_loss": fm.final_loss,
+            "compute_cluster": fm.compute_cluster,
+            "model_info": model_info or None,
+            "training_stats": training_stats or None,
+            "predictors": [
+                {"id": p.id, "target": p.target_column, "type": p.target_type,
+                 "status": p.status, "accuracy": p.accuracy}
+                for p in predictors
+            ],
+        }
+        return data
+
+    kv = {
+        "Model ID": fm.id,
+        "Name": fm.name or "(unnamed)",
+        "Status": fm.status,
+        "Dimensions": fm.dimensions or "—",
+        "Epochs": fm.epochs or "—",
+        "Final Loss": f"{fm.final_loss:.4f}" if fm.final_loss else "—",
+    }
+    if num_params:
+        kv["Parameters"] = f"{num_params:,}" if isinstance(num_params, int) else str(num_params)
+    if num_columns:
+        kv["Columns"] = str(num_columns)
+    kv["Cluster"] = fm.compute_cluster or "—"
+
+    print_kv(kv)
+    if predictors:
+        console.print(f"\n  [bold]Predictors:[/bold]")
+        for p in predictors:
+            acc = f"  acc={p.accuracy:.3f}" if p.accuracy else ""
+            console.print(f"    {p.target_column} ({p.target_type}) — {p.status or '?'}{acc}")
+    return None
+
+
 @model.command()
-@click.argument("model_id")
+@click.argument("model_id", required=False)
 @pass_client
 def show(state: ClientState, model_id):
-    """Show model details."""
-    fm = state.client.foundational_model(model_id)
-    data = {
-        "model_id": fm.id,
-        "name": fm.name,
-        "status": fm.status,
-        "dimensions": fm.dimensions,
-        "epochs": fm.epochs,
-        "final_loss": fm.final_loss,
-        "compute_cluster": fm.compute_cluster,
-    }
+    """Show model details. Without MODEL_ID, shows all models."""
+    if model_id:
+        fm = state.client.foundational_model(model_id)
+        data = _show_one_model(state, fm)
+        if data:
+            print_json(data)
+        return
+
+    # Show all
+    sessions = state.client.list_sessions()
+    if not sessions:
+        console.print("No models found.")
+        return
+
     if state.output_json:
-        print_json(data)
+        out = []
+        for s in sessions:
+            fm = state.client.foundational_model(s.id)
+            out.append(_show_one_model(state, fm))
+        print_json(out)
     else:
-        print_kv({
-            "Model ID": fm.id,
-            "Name": fm.name or "(unnamed)",
-            "Status": fm.status,
-            "Dimensions": fm.dimensions or "—",
-            "Epochs": fm.epochs or "—",
-            "Final Loss": fm.final_loss or "—",
-            "Cluster": fm.compute_cluster or "—",
-        })
+        for i, s in enumerate(sessions):
+            if i > 0:
+                console.print()
+            fm = state.client.foundational_model(s.id)
+            _show_one_model(state, fm)
 
 
 @model.command()
@@ -417,34 +480,97 @@ def recent(state: ClientState, limit):
         console.print(f"{status_fmt}  {s.id}{name_str}{dims}")
 
 
+def _predict_on_es(fm, target_column, record):
+    """Predict using the ES's built-in predictor for any column."""
+    payload = {
+        "query_record": record,
+        "target_column": target_column,
+    }
+    return fm._ctx.post_json(f"/session/{fm.id}/predict", data=payload)
+
+
+def _find_trained_predictor(fm, target_column, predictor_id=None):
+    """Find a trained SP predictor, or None if not found."""
+    try:
+        predictors = fm.list_predictors()
+    except Exception:
+        return None
+    if predictor_id:
+        for p in predictors:
+            if p.id == predictor_id:
+                return p
+        return None
+    for p in predictors:
+        if p.target_column == target_column:
+            return p
+    return None
+
+
+def _format_prediction_data(result):
+    """Format prediction result dict or object into display dict."""
+    # Handle both raw API dicts and PredictionResult objects
+    if isinstance(result, dict):
+        data = {}
+        pred = result.get("prediction") or result.get("predicted_class")
+        if pred is not None:
+            data["Predicted"] = str(pred)
+        conf = result.get("confidence")
+        if conf is not None:
+            data["Confidence"] = f"{conf:.4f}"
+        prob = result.get("probability")
+        if prob is not None:
+            data["Probability"] = f"{prob:.4f}"
+        probs = result.get("probabilities")
+        if probs:
+            data["Distribution"] = "  ".join(f"{k}: {v:.3f}" for k, v in probs.items())
+        uuid = result.get("prediction_uuid")
+        if uuid:
+            data["Prediction UUID"] = uuid
+        return data
+
+    data = {}
+    if result.predicted_class is not None:
+        data["Predicted"] = result.predicted_class
+    elif hasattr(result, "prediction") and result.prediction is not None:
+        data["Predicted"] = str(result.prediction)
+    if result.confidence is not None:
+        data["Confidence"] = f"{result.confidence:.4f}"
+    if hasattr(result, "probability") and result.probability is not None:
+        data["Probability"] = f"{result.probability:.4f}"
+    if hasattr(result, "probabilities") and result.probabilities:
+        data["Distribution"] = "  ".join(f"{k}: {v:.3f}" for k, v in result.probabilities.items())
+    if hasattr(result, "prediction_uuid") and result.prediction_uuid:
+        data["Prediction UUID"] = result.prediction_uuid
+    return data
+
+
 @model.command("predict")
 @click.argument("model_id")
 @click.argument("target_column")
 @click.argument("record_json", required=False)
-@click.option("--model-type", "model_type", default=None,
-              type=click.Choice(["sp", "foundation", "foundation+xgboost", "foundation+linear"]),
-              help="Force prediction model type (default: auto-route)")
-@click.option("--predictor-id", default=None, help="Use a specific predictor by ID")
+@click.option("--predictor-id", default=None, help="Use a specific trained predictor by ID")
 @click.option("--file", "data_file", type=click.Path(exists=True),
               help="Batch predict from file (CSV, JSON, Parquet)")
-@click.option("--explain", is_flag=True, help="Include feature importance")
+@click.option("--explain", is_flag=True, help="Include feature importance (trained predictors only)")
 @pass_client
 def model_predict(state: ClientState, model_id, target_column, record_json,
-                  model_type, predictor_id, data_file, explain):
-    """Predict a column on a foundation model.
+                  predictor_id, data_file, explain):
+    """Predict a column using the ES built-in predictor or a trained SP.
+
+    Every column in an ES can be predicted directly. If a trained predictor
+    exists for the target column, it will be used automatically.
 
     \b
-    Auto-routes to SP if trained, otherwise uses foundation+xgboost.
-
-    \b
-    Single:  ffs foundation predict MODEL_ID churned '{"age": 35, "income": 50000}'
-    Batch:   ffs foundation predict MODEL_ID churned --file data.csv
-    Force:   ffs foundation predict MODEL_ID churned '{"age": 35}' --model-type foundation
+    Single:  ffs models predict ES_ID melody_t3 '{"melody_t0": 60, "melody_t1": 62}'
+    Batch:   ffs models predict ES_ID churned --file data.csv
     """
     if not record_json and not data_file:
         raise click.ClickException("Provide a JSON record or --file")
 
     fm = state.client.foundational_model(model_id)
+
+    # Check for a trained SP predictor first; fall back to ES built-in
+    trained = _find_trained_predictor(fm, target_column, predictor_id)
 
     if data_file:
         import pandas as pd
@@ -456,72 +582,63 @@ def model_predict(state: ClientState, model_id, target_column, record_json,
         elif lower.endswith(".parquet"):
             df = pd.read_parquet(data_file)
         else:
-            raise click.ClickException(f"Unsupported file format (use .csv, .json, or .parquet): {data_file}")
+            raise click.ClickException(f"Unsupported file format: {data_file}")
 
-        records = df.to_dict(orient="records")
-        results = []
-        for rec in records:
-            kwargs = {}
-            if model_type:
-                kwargs["model_type"] = model_type
-            if predictor_id:
-                kwargs["predictor_id"] = predictor_id
-            results.append(fm.predict(target_column, rec, **kwargs))
-
-        if state.output_json:
-            print_json([r.to_dict() for r in results])
+        if trained:
+            results = trained.batch_predict(df)
+            if state.output_json:
+                print_json([r.to_dict() for r in results])
+            else:
+                console.print(f"[green]{len(results)} predictions[/green] (trained predictor)\n")
+                rows = []
+                for i, r in enumerate(results):
+                    row = {"#": str(i + 1)}
+                    d = _format_prediction_data(r)
+                    row.update({k: str(v) for k, v in d.items() if k != "Prediction UUID"})
+                    rows.append(row)
+                if rows:
+                    print_list_table(rows, list(rows[0].keys()))
         else:
-            console.print(f"[green]{len(results)} predictions[/green]\n")
-            rows = []
-            for i, r in enumerate(results):
-                row = {"#": str(i + 1)}
-                if r.predicted_class is not None:
-                    row["Predicted"] = r.predicted_class
-                elif hasattr(r, "prediction") and r.prediction is not None:
-                    row["Predicted"] = str(r.prediction)
-                if r.confidence is not None:
-                    row["Confidence"] = f"{r.confidence:.3f}"
-                if r.model_type:
-                    row["Model"] = r.model_type
-                rows.append(row)
-            if rows:
-                print_list_table(rows, list(rows[0].keys()))
+            records = df.to_dict(orient="records")
+            results = []
+            for rec in records:
+                results.append(_predict_on_es(fm, target_column, rec))
+            if state.output_json:
+                print_json(results)
+            else:
+                console.print(f"[green]{len(results)} predictions[/green] (ES built-in)\n")
+                rows = []
+                for i, r in enumerate(results):
+                    row = {"#": str(i + 1)}
+                    d = _format_prediction_data(r)
+                    row.update({k: str(v) for k, v in d.items() if k != "Prediction UUID"})
+                    rows.append(row)
+                if rows:
+                    print_list_table(rows, list(rows[0].keys()))
         return
 
     record = json.loads(record_json)
-    kwargs = {}
-    if model_type:
-        kwargs["model_type"] = model_type
-    if predictor_id:
-        kwargs["predictor_id"] = predictor_id
 
-    result = fm.predict(target_column, record, **kwargs)
-
-    if state.output_json:
-        print_json(result.to_dict())
-    else:
-        data = {}
-        if result.predicted_class is not None:
-            data["Predicted"] = result.predicted_class
-        elif hasattr(result, "prediction") and result.prediction is not None:
-            data["Predicted"] = str(result.prediction)
-        if result.confidence is not None:
-            data["Confidence"] = f"{result.confidence:.4f}"
-        if hasattr(result, "probability") and result.probability is not None:
-            data["Probability"] = f"{result.probability:.4f}"
-        if hasattr(result, "probabilities") and result.probabilities:
-            data["Distribution"] = "  ".join(f"{k}: {v:.3f}" for k, v in result.probabilities.items())
-        if result.model_type:
-            data["Model Type"] = result.model_type
-        if result.prediction_uuid:
-            data["Prediction UUID"] = result.prediction_uuid
-        if explain and hasattr(result, "feature_importance") and result.feature_importance:
-            data["Feature Importance"] = ""
-            print_kv(data, title="Prediction")
-            for col, score in result.feature_importance.items():
-                console.print(f"  {col}: {score:.4f}")
+    if trained:
+        result = trained.predict(record, feature_importance=explain)
+        if state.output_json:
+            print_json(result.to_dict())
         else:
-            print_kv(data, title="Prediction")
+            data = _format_prediction_data(result)
+            if explain and hasattr(result, "feature_importance") and result.feature_importance:
+                data["Feature Importance"] = ""
+                print_kv(data, title="Prediction (trained)")
+                for col, score in result.feature_importance.items():
+                    console.print(f"  {col}: {score:.4f}")
+            else:
+                print_kv(data, title="Prediction (trained)")
+    else:
+        result = _predict_on_es(fm, target_column, record)
+        if state.output_json:
+            print_json(result)
+        else:
+            data = _format_prediction_data(result)
+            print_kv(data, title="Prediction (ES built-in)")
 
 
 @model.command()
@@ -613,3 +730,124 @@ def delete(state: ClientState, model_id):
         print_json(result)
     else:
         console.print(f"[red]Marked for deletion:[/red] {model_id}")
+
+
+def _python_snippet(session_id, columns, predictors, server):
+    """Generate a Python code snippet with real values."""
+    sample = {c: f"..." for c in columns[:6]}
+    sample_str = json.dumps(sample, indent=4)
+
+    lines = [
+        'from featrixsphere import FeatrixSphere',
+        '',
+        f'featrix = FeatrixSphere(api_key="YOUR_API_KEY", base_url="{server}")',
+        f'fm = featrix.foundational_model("{session_id}")',
+        '',
+        '# Columns in this model:',
+        f'# {", ".join(columns)}' if columns else '# (no columns found)',
+        '',
+        f'record = {sample_str}',
+    ]
+
+    if predictors:
+        for p in predictors:
+            lines.append('')
+            lines.append(f'# Predict: {p.target_column} ({p.target_type})')
+            lines.append(f'result = fm.predict("{p.target_column}", record)')
+            lines.append('print(result.predicted_class, result.confidence)')
+    else:
+        lines.append('')
+        lines.append('# Encode into embedding space')
+        lines.append('vectors = fm.encode(record)')
+        lines.append('print(vectors)')
+
+    return '\n'.join(lines)
+
+
+def _typescript_snippet(session_id, columns, predictors, server):
+    """Generate a TypeScript/fetch code snippet with real values."""
+    sample = {c: "..." for c in columns[:6]}
+    sample_str = json.dumps(sample, indent=2)
+
+    lines = [
+        f'const API_KEY = "YOUR_API_KEY";',
+        f'const BASE_URL = "{server}";',
+        f'const SESSION_ID = "{session_id}";',
+        '',
+        f'const record = {sample_str};',
+    ]
+
+    if predictors:
+        for p in predictors:
+            lines.append('')
+            lines.append(f'// Predict: {p.target_column} ({p.target_type})')
+            lines.append(f'const response = await fetch(')
+            lines.append(f'  `${{BASE_URL}}/session/${{SESSION_ID}}/predict`,')
+            lines.append(f'  {{')
+            lines.append(f'    method: "POST",')
+            lines.append(f'    headers: {{')
+            lines.append(f'      "Content-Type": "application/json",')
+            lines.append(f'      "X-API-Key": API_KEY,')
+            lines.append(f'    }},')
+            lines.append(f'    body: JSON.stringify({{')
+            lines.append(f'      query_record: record,')
+            lines.append(f'      predictor_id: "{p.id}",')
+            lines.append(f'    }}),')
+            lines.append(f'  }}')
+            lines.append(f');')
+            lines.append(f'const result = await response.json();')
+            lines.append(f'console.log(result.prediction, result.confidence);')
+    else:
+        lines.append('')
+        lines.append('// Encode into embedding space')
+        lines.append(f'const response = await fetch(')
+        lines.append(f'  `${{BASE_URL}}/compute/session/${{SESSION_ID}}/encode`,')
+        lines.append(f'  {{')
+        lines.append(f'    method: "POST",')
+        lines.append(f'    headers: {{')
+        lines.append(f'      "Content-Type": "application/json",')
+        lines.append(f'      "X-API-Key": API_KEY,')
+        lines.append(f'    }},')
+        lines.append(f'    body: JSON.stringify({{ record }}),')
+        lines.append(f'  }}')
+        lines.append(f');')
+        lines.append(f'const vectors = await response.json();')
+        lines.append(f'console.log(vectors);')
+
+    return '\n'.join(lines)
+
+
+@model.command()
+@click.argument("model_id")
+@click.option("--typescript", "lang", flag_value="typescript", help="Generate TypeScript snippet")
+@click.option("--python", "lang", flag_value="python", default=True, help="Generate Python snippet (default)")
+@pass_client
+def code(state: ClientState, model_id, lang):
+    """Generate ready-to-use code for this model.
+
+    \b
+    Examples:
+      ffs models code SESSION_ID
+      ffs models code SESSION_ID --typescript
+    """
+    fm = state.client.foundational_model(model_id)
+
+    try:
+        columns = fm.get_columns()
+    except Exception:
+        columns = []
+
+    try:
+        predictors = fm.list_predictors()
+    except Exception:
+        predictors = []
+
+    if lang == "typescript":
+        snippet = _typescript_snippet(model_id, columns, predictors, state.server)
+        console.print(f"\n[bold]TypeScript[/bold] — {model_id}\n")
+    else:
+        snippet = _python_snippet(model_id, columns, predictors, state.server)
+        console.print(f"\n[bold]Python[/bold] — {model_id}\n")
+
+    click.echo(snippet)
+    console.print()
