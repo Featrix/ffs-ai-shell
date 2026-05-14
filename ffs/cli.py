@@ -19,6 +19,16 @@ from ffs import train_cmd
 FEATRIX_UI = "https://featrix-ui.lovable.app"
 
 
+def _get_version_string():
+    from ffs import __version__ as ffs_ver
+    try:
+        from importlib.metadata import version
+        sphere_ver = version("featrixsphere")
+    except Exception:
+        sphere_ver = "unknown"
+    return f"ffs {ffs_ver}  (featrixsphere {sphere_ver})"
+
+
 def _completions_installed():
     """Check if shell tab completion appears to be set up."""
     home = Path.home()
@@ -39,6 +49,10 @@ def _completions_installed():
 @click.option("--cluster", envvar="FFS_CLUSTER", default=None, hidden=True, help="Compute cluster name")
 @click.option("--json", "output_json", is_flag=True, help="Output raw JSON")
 @click.option("--quiet", is_flag=True, help="Minimal output")
+@click.version_option(
+    version=_get_version_string(),
+    message="%(version)s",
+)
 @click.pass_context
 def main(ctx, server, cluster, output_json, quiet):
     """The Featrix Foundation Shell."""
