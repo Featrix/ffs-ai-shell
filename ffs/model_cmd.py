@@ -369,6 +369,23 @@ def jobs(state: ClientState, model_id):
             console.print(f"  [red]Error:[/red] {j.get('job_type', '?')}: {j.get('error')}")
 
 
+_TERMINAL_PREDICTOR_STATUSES = {"done", "error", "failed", "cancelled"}
+
+
+def _pending_predictors(fm):
+    """Predictors attached to this model that haven't reached a terminal status.
+
+    fm.status reflects the ES/session lifecycle, which can hit "done" while an
+    attached SP predictor is still training — checked separately here so `wait`
+    doesn't report success before the predictor is actually servable.
+    """
+    try:
+        predictors = fm.list_predictors()
+    except Exception:
+        return []
+    return [p for p in predictors if p.status not in _TERMINAL_PREDICTOR_STATUSES]
+
+
 @model.command()
 @click.argument("model_id")
 @click.option("--poll-interval", type=int, default=10, help="Seconds between checks")
@@ -384,7 +401,9 @@ def wait(state: ClientState, model_id, poll_interval, timeout):
         data = fm.refresh()
         elapsed = int(time.time() - start)
 
-        if fm.status == "done":
+        pending_predictors = _pending_predictors(fm) if fm.status == "done" else []
+
+        if fm.status == "done" and not pending_predictors:
             console.print(f"\n[green]Training complete.[/green]")
             if not state.quiet:
                 print_kv({
@@ -420,6 +439,10 @@ def wait(state: ClientState, model_id, poll_interval, timeout):
             extra_lines.append(f"  [dim]Session status: {sess_status}[/dim]")
             if sess_status in ("new", "uploading", "uploaded", "queued"):
                 extra_lines.append(f"  [dim]Waiting for jobs to be scheduled...[/dim]")
+
+        if pending_predictors:
+            names = ", ".join(p.target_column or p.id for p in pending_predictors)
+            extra_lines.append(f"  [dim]ES done — waiting for predictor(s) to finish: {names}[/dim]")
 
         # Clear screen and redraw
         total_lines = len(status_lines) + len(extra_lines) + 1
@@ -676,13 +699,17 @@ def encode(state: ClientState, model_id, record_json, short):
 
 @model.command()
 @click.argument("model_id")
-@click.option("--org", required=True, help="Organization ID")
-@click.option("--name", default=None, help="Published name")
+@click.option("--name", default=None, help="Published name (defaults to the model's own name)")
+@click.option("--max-wait-time", type=int, default=600, help="Max seconds to wait for publish to complete")
+@click.option("--poll-interval", type=int, default=5, help="Seconds between status polls")
 @pass_client
-def publish(state: ClientState, model_id, org, name):
-    """Publish a model."""
+def publish(state: ClientState, model_id, name, max_wait_time, poll_interval):
+    """Publish a model.
+
+    The org is derived from your API key — there is no --org option.
+    """
     fm = state.client.foundational_model(model_id)
-    result = fm.publish(org_id=org, name=name)
+    result = fm.publish(name=name, max_wait_time=max_wait_time, poll_interval=poll_interval)
     if state.output_json:
         print_json(result)
     else:

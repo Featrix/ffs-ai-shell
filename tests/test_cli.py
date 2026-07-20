@@ -3,7 +3,9 @@ import json
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from ffs.cli import main
+import pytest
+
+from ffs.cli import main, cli
 
 
 class TestMainGroup:
@@ -72,6 +74,39 @@ class TestLogin:
                 result = runner.invoke(main, ["login", "--api-key", "sk_test_456", "--global"])
                 assert result.exit_code == 0
                 assert (tmp_path / ".featrix").exists()
+
+
+class TestCliErrorHandling:
+    """The `cli()` entry point (not `main` itself) is what --json-formats
+    errors, since it wraps the whole run in a try/except."""
+
+    def test_emits_plain_error_by_default(self, capsys, monkeypatch):
+        monkeypatch.setattr("sys.argv", ["ffs", "whoami"])
+        monkeypatch.setattr("ffs.cli.main", MagicMock(side_effect=RuntimeError("boom")))
+        with pytest.raises(SystemExit) as exc:
+            cli()
+        assert exc.value.code == 1
+        assert "boom" in capsys.readouterr().out
+
+    def test_emits_json_error_in_json_mode(self, capsys, monkeypatch):
+        monkeypatch.setattr("sys.argv", ["ffs", "--json", "whoami"])
+        monkeypatch.setattr("ffs.cli.main", MagicMock(side_effect=RuntimeError("boom")))
+        with pytest.raises(SystemExit) as exc:
+            cli()
+        assert exc.value.code == 1
+        data = json.loads(capsys.readouterr().out)
+        assert data["error"]["message"] == "boom"
+
+    def test_json_error_includes_http_status_when_present(self, capsys, monkeypatch):
+        err = RuntimeError("404 Client Error: Not Found for url: https://sphere-api.featrix.com/x")
+        err.response = MagicMock(status_code=404)
+        monkeypatch.setattr("sys.argv", ["ffs", "--json", "predict", "sid", "{}"])
+        monkeypatch.setattr("ffs.cli.main", MagicMock(side_effect=err))
+        with pytest.raises(SystemExit) as exc:
+            cli()
+        assert exc.value.code == 1
+        data = json.loads(capsys.readouterr().out)
+        assert data["error"]["status"] == 404
 
 
 class TestUpgrade:

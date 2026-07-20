@@ -196,15 +196,27 @@ main.add_command(train_cmd.train)
 main.add_command(server_cmd.server)
 
 
+def _emit_error(message, status=None):
+    """Print an error either as JSON (if --json was requested) or as rich text."""
+    if "--json" in sys.argv:
+        payload = {"error": {"message": message}}
+        if status is not None:
+            payload["error"]["status"] = status
+        click.echo(json.dumps(payload))
+    else:
+        console.print(f"[red]Error:[/red] {message}")
+
+
 def cli():
     """Entry point that catches exceptions cleanly."""
     try:
         main(standalone_mode=False)
     except click.ClickException as e:
-        console.print(f"[red]Error:[/red] {e.format_message()}")
+        _emit_error(e.format_message())
         sys.exit(e.exit_code)
     except SystemExit:
         raise
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        status = getattr(getattr(e, "response", None), "status_code", None)
+        _emit_error(str(e), status=status)
         sys.exit(1)

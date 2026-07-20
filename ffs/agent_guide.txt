@@ -100,8 +100,8 @@ ffs foundation encode MODEL_ID '{"col": "val"}' [--short]
   JSON output: vector array
   Exit: 0 on success
 
-ffs foundation publish MODEL_ID --org ORG_ID [--name NAME]
-  Publish a model.
+ffs foundation publish MODEL_ID [--name NAME] [--max-wait-time SECONDS] [--poll-interval SECONDS]
+  Publish a model. Org is derived from your API key — there is no --org option.
   Exit: 0 on success
 
 ffs foundation unpublish MODEL_ID

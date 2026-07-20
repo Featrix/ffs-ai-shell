@@ -79,22 +79,36 @@ class TestPredictorList:
 
 
 class TestPredictorShow:
-    def test_shows_predictor(self, runner, mock_sphere, mock_predictor, env):
-        mock_sphere.predictor.return_value = mock_predictor
-        result = runner.invoke(main, ["predictor", "show", "pred-xyz789"], env=env)
+    """`predictor show` resolves via fm.list_predictors(), not the legacy
+    client.predictor() call — that call only reads the live (TTL'd) Redis
+    job record and goes null once a done predictor's job record expires."""
+
+    def test_shows_predictor(self, runner, mock_sphere, mock_fm, mock_predictor, env):
+        mock_sphere.foundational_model.return_value = mock_fm
+        mock_fm.list_predictors.return_value = [mock_predictor]
+        result = runner.invoke(main, ["predictor", "show", "fm-abc123"], env=env)
         assert result.exit_code == 0
         assert "pred-xyz789" in result.output
         assert "0.8500" in result.output  # accuracy
 
-    def test_json_output(self, runner, mock_sphere, mock_predictor, env):
-        mock_sphere.predictor.return_value = mock_predictor
-        result = runner.invoke(main, ["--json", "predictor", "show", "pred-xyz789"], env=env)
+    def test_json_output(self, runner, mock_sphere, mock_fm, mock_predictor, env):
+        mock_sphere.foundational_model.return_value = mock_fm
+        mock_fm.list_predictors.return_value = [mock_predictor]
+        result = runner.invoke(main, ["--json", "predictor", "show", "fm-abc123"], env=env)
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["id"] == "pred-xyz789"
 
-    def test_shows_metrics(self, runner, mock_sphere, mock_predictor, env):
-        mock_sphere.predictor.return_value = mock_predictor
-        result = runner.invoke(main, ["predictor", "show", "pred-xyz789"], env=env)
+    def test_shows_metrics(self, runner, mock_sphere, mock_fm, mock_predictor, env):
+        mock_sphere.foundational_model.return_value = mock_fm
+        mock_fm.list_predictors.return_value = [mock_predictor]
+        result = runner.invoke(main, ["predictor", "show", "fm-abc123"], env=env)
         assert "0.9200" in result.output  # AUC
         assert "0.8300" in result.output  # F1
+
+    def test_no_predictor_found(self, runner, mock_sphere, mock_fm, env):
+        mock_sphere.foundational_model.return_value = mock_fm
+        mock_fm.list_predictors.return_value = []
+        result = runner.invoke(main, ["predictor", "show", "fm-abc123"], env=env)
+        assert result.exit_code != 0
+        assert "No predictor found" in result.output

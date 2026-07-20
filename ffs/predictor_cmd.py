@@ -74,7 +74,16 @@ def list_predictors(state: ClientState, model_id):
 @pass_client
 def show(state: ClientState, model_id):
     """Show predictor details and metrics."""
-    p = state.client.predictor(model_id)
+    # Go through fm.list_predictors() rather than state.client.predictor():
+    # the latter only reads status/accuracy off the live Redis job record,
+    # which is TTL'd and goes null well before a done predictor's session
+    # expires — the same info list_predictors() (and `foundation show`)
+    # sources more durably from the session's job_plan.
+    fm = state.client.foundational_model(model_id)
+    predictors = fm.list_predictors()
+    if not predictors:
+        raise click.ClickException(f"No predictor found in session {model_id}")
+    p = predictors[0]
 
     if state.output_json:
         print_json(p.to_dict())

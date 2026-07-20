@@ -194,6 +194,34 @@ class TestFoundationWait:
             result = runner.invoke(main, ["foundation", "wait", "fm-abc123", "--timeout", "3600"], env=env)
         assert result.exit_code == 1
 
+    def test_es_done_but_predictor_still_training(self, runner, mock_sphere, mock_fm, mock_predictor, env):
+        """fm.status can hit "done" (ES/session lifecycle) while an attached
+        SP predictor is still training — wait must not report success yet."""
+        mock_sphere.foundational_model.return_value = mock_fm
+        mock_fm.status = "done"
+        training_predictor = MagicMock()
+        training_predictor.id = "pred-xyz789"
+        training_predictor.target_column = "class"
+        training_predictor.status = "training"
+        with patch("ffs.model_cmd.time") as mock_time:
+            mock_time.time.side_effect = [0, 5, 3700]
+            mock_fm.list_predictors.side_effect = [[training_predictor], [training_predictor]]
+            result = runner.invoke(main, ["foundation", "wait", "fm-abc123", "--timeout", "3600"], env=env)
+        assert result.exit_code == 1
+        assert "Training complete" not in result.output
+
+    def test_predictor_finishes_after_es(self, runner, mock_sphere, mock_fm, env):
+        mock_sphere.foundational_model.return_value = mock_fm
+        mock_fm.status = "done"
+        done_predictor = MagicMock()
+        done_predictor.id = "pred-xyz789"
+        done_predictor.target_column = "class"
+        done_predictor.status = "done"
+        mock_fm.list_predictors.return_value = [done_predictor]
+        result = runner.invoke(main, ["foundation", "wait", "fm-abc123"], env=env)
+        assert result.exit_code == 0
+        assert "Training complete" in result.output
+
 
 class TestFoundationExtend:
     def test_extends_model(self, runner, mock_sphere, mock_fm, env):
@@ -232,17 +260,19 @@ class TestFoundationPublish:
     def test_publishes(self, runner, mock_sphere, mock_fm, env):
         mock_sphere.foundational_model.return_value = mock_fm
         mock_fm.publish.return_value = {"published_path": "org/model"}
-        result = runner.invoke(main, ["foundation", "publish", "fm-abc123", "--org", "myorg"], env=env)
+        result = runner.invoke(main, ["foundation", "publish", "fm-abc123"], env=env)
         assert result.exit_code == 0
         assert "Published" in result.output
+        mock_fm.publish.assert_called_once_with(name=None, max_wait_time=600, poll_interval=5)
 
     def test_json_output(self, runner, mock_sphere, mock_fm, env):
         mock_sphere.foundational_model.return_value = mock_fm
         mock_fm.publish.return_value = {"published_path": "org/model"}
-        result = runner.invoke(main, ["--json", "foundation", "publish", "fm-abc123", "--org", "myorg"], env=env)
+        result = runner.invoke(main, ["--json", "foundation", "publish", "fm-abc123", "--name", "biz-key-v11"], env=env)
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["published_path"] == "org/model"
+        mock_fm.publish.assert_called_once_with(name="biz-key-v11", max_wait_time=600, poll_interval=5)
 
 
 class TestFoundationUnpublish:
