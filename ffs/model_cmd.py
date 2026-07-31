@@ -747,6 +747,28 @@ def deprecate(state: ClientState, model_id, message, expires):
 
 @model.command()
 @click.argument("model_id")
+@click.option("--reason", default=None, help="Reason for cancellation (stored for audit)")
+@click.confirmation_option(prompt="Are you sure you want to cancel training for this model?")
+@pass_client
+def cancel(state: ClientState, model_id, reason):
+    """Cancel training for a foundation model.
+
+    Cancels whatever job is currently active — queued or running — not just
+    queued jobs. If it's already training, cancellation is cooperative (the
+    training loop notices at its next checkpoint, not instantly).
+    """
+    fm = state.client.foundational_model(model_id)
+    result = fm.cancel(reason=reason)
+    if state.output_json:
+        print_json(result)
+    else:
+        console.print(f"[yellow]Cancelled:[/yellow] {model_id}")
+        if reason:
+            console.print(f"Reason: {reason}")
+
+
+@model.command()
+@click.argument("model_id")
 @click.confirmation_option(prompt="Are you sure you want to delete this model?")
 @pass_client
 def delete(state: ClientState, model_id):

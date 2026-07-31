@@ -39,3 +39,15 @@ CLI tool (`ffs`) for building ML models via the Featrix Sphere API. Python, Clic
 - `state.output_json` controls JSON vs human-readable output
 - Browser opens use `webbrowser.open()` with printed URL fallback
 - When asked to publish: commit, push, build, and upload to PyPI — don't just edit files
+
+## Confidentiality
+- **This repo (`Featrix/ffs-ai-shell`) is PUBLIC.** Never put a customer/org name, customer
+  identifiers, or anything from a customer bug report's identifying details (company name, org
+  ID, account handle) into a commit message, code comment, docstring, test name, or any other
+  file that gets committed. Describe the underlying bug in neutral, technical terms only (e.g.
+  "a customer bug report" or "reported via support", not the customer's name).
+- This applies even when the customer's own report explicitly names themselves — the report
+  being non-confidential to *them* doesn't make it OK to publish their name in *Featrix's* public
+  git history. If in doubt, leave the identity out.
+- Before writing any commit message, doc, or comment that references an external bug report,
+  scan it for names, org identifiers, and other identifying details and exclude them.

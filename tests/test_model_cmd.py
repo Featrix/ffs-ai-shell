@@ -297,6 +297,40 @@ class TestFoundationDeprecate:
         assert "2025-12-31" in result.output
 
 
+class TestFoundationCancel:
+    def test_cancels_with_yes(self, runner, mock_sphere, mock_fm, env):
+        mock_sphere.foundational_model.return_value = mock_fm
+        mock_fm.cancel.return_value = {"cancelled": True, "status": "cancelled"}
+        result = runner.invoke(main, ["foundation", "cancel", "fm-abc123", "--yes"], env=env)
+        assert result.exit_code == 0
+        assert "Cancelled" in result.output
+        mock_fm.cancel.assert_called_once_with(reason=None)
+
+    def test_cancels_with_reason(self, runner, mock_sphere, mock_fm, env):
+        mock_sphere.foundational_model.return_value = mock_fm
+        mock_fm.cancel.return_value = {"cancelled": True}
+        result = runner.invoke(main, [
+            "foundation", "cancel", "fm-abc123", "--yes", "--reason", "duplicate run",
+        ], env=env)
+        assert result.exit_code == 0
+        assert "duplicate run" in result.output
+        mock_fm.cancel.assert_called_once_with(reason="duplicate run")
+
+    def test_requires_confirmation(self, runner, mock_sphere, mock_fm, env):
+        mock_sphere.foundational_model.return_value = mock_fm
+        result = runner.invoke(main, ["foundation", "cancel", "fm-abc123"], env=env, input="n\n")
+        assert result.exit_code != 0
+        mock_fm.cancel.assert_not_called()
+
+    def test_json_output(self, runner, mock_sphere, mock_fm, env):
+        mock_sphere.foundational_model.return_value = mock_fm
+        mock_fm.cancel.return_value = {"cancelled": True, "status": "cancelled"}
+        result = runner.invoke(main, ["--json", "foundation", "cancel", "fm-abc123", "--yes"], env=env)
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["cancelled"] is True
+
+
 class TestFoundationDelete:
     def test_deletes_with_yes(self, runner, mock_sphere, mock_fm, env):
         mock_sphere.foundational_model.return_value = mock_fm

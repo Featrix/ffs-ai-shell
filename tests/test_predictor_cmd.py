@@ -112,3 +112,28 @@ class TestPredictorShow:
         result = runner.invoke(main, ["predictor", "show", "fm-abc123"], env=env)
         assert result.exit_code != 0
         assert "No predictor found" in result.output
+
+
+class TestPredictorCancel:
+    def test_cancels_with_yes(self, runner, mock_sphere, mock_fm, mock_predictor, env):
+        mock_sphere.foundational_model.return_value = mock_fm
+        mock_fm.list_predictors.return_value = [mock_predictor]
+        mock_predictor.cancel.return_value = {"cancelled": True, "status": "cancelled"}
+        result = runner.invoke(main, ["predictor", "cancel", "fm-abc123", "--yes"], env=env)
+        assert result.exit_code == 0
+        assert "Cancelled" in result.output
+        mock_predictor.cancel.assert_called_once_with(reason=None)
+
+    def test_requires_confirmation(self, runner, mock_sphere, mock_fm, mock_predictor, env):
+        mock_sphere.foundational_model.return_value = mock_fm
+        mock_fm.list_predictors.return_value = [mock_predictor]
+        result = runner.invoke(main, ["predictor", "cancel", "fm-abc123"], env=env, input="n\n")
+        assert result.exit_code != 0
+        mock_predictor.cancel.assert_not_called()
+
+    def test_no_predictor_found(self, runner, mock_sphere, mock_fm, env):
+        mock_sphere.foundational_model.return_value = mock_fm
+        mock_fm.list_predictors.return_value = []
+        result = runner.invoke(main, ["predictor", "cancel", "fm-abc123", "--yes"], env=env)
+        assert result.exit_code != 0
+        assert "No predictor found" in result.output

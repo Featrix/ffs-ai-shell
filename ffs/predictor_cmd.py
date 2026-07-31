@@ -102,3 +102,28 @@ def show(state: ClientState, model_id):
         if p.f1 is not None:
             data["F1"] = f"{p.f1:.4f}"
         print_kv(data, title="Predictor")
+
+
+@predictor.command()
+@click.argument("model_id")
+@click.option("--reason", default=None, help="Reason for cancellation (stored for audit)")
+@click.confirmation_option(prompt="Are you sure you want to cancel this predictor?")
+@pass_client
+def cancel(state: ClientState, model_id, reason):
+    """Cancel a training predictor.
+
+    Cancels whatever job is currently active on the predictor's session —
+    queued or running, not just queued.
+    """
+    fm = state.client.foundational_model(model_id)
+    predictors = fm.list_predictors()
+    if not predictors:
+        raise click.ClickException(f"No predictor found in session {model_id}")
+    p = predictors[0]
+    result = p.cancel(reason=reason)
+    if state.output_json:
+        print_json(result)
+    else:
+        console.print(f"[yellow]Cancelled:[/yellow] {p.id}")
+        if reason:
+            console.print(f"Reason: {reason}")

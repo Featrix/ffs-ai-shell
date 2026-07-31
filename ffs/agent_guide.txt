@@ -116,6 +116,11 @@ ffs foundation delete MODEL_ID --yes
   Delete a model. REQUIRES --yes for non-interactive use.
   Exit: 0 on success
 
+ffs foundation cancel MODEL_ID --yes [--reason TEXT]
+  Cancel training for a model. REQUIRES --yes for non-interactive use.
+  Cancels whatever job is active (queued or running), not just queued ones.
+  Exit: 0 on success
+
 ### Predictors
 
 ffs predictor create MODEL_ID --target-column COL --type classifier|regressor [--labels FILE] [--name NAME] [--epochs N]
@@ -132,6 +137,11 @@ ffs predictor list MODEL_ID
 ffs predictor show PREDICTOR_ID
   Show predictor details and metrics.
   JSON fields: id, session_id, target_column, target_type, status, accuracy, auc, f1
+  Exit: 0 on success
+
+ffs predictor cancel MODEL_ID --yes [--reason TEXT]
+  Cancel a training predictor. REQUIRES --yes for non-interactive use.
+  Cancels whatever job is active on the predictor's session (queued or running).
   Exit: 0 on success
 
 ### Training (New Sessions)
@@ -154,6 +164,21 @@ ffs predict MODEL_ID --file data.csv [--target-column COL] [--explain]
   --target-column selects predictor when multiple exist.
   --explain includes feature importance scores.
   JSON output: [{predicted_class, confidence, ...}, ...]
+  Exit: 0 on success
+
+### Jobs
+
+ffs jobs list [--prefix NAME]
+  List sessions with jobs still queued or running, org-wide (one call,
+  no need to know a model ID up front). --prefix filters by name/ID.
+  JSON output: [{"id", "name", "status", "dimensions", "epochs"}, ...]
+  Exit: 0 on success
+
+ffs jobs cancel-queued [MODEL_ID] --yes [--prefix NAME] [--reason TEXT]
+  Cancel jobs still queued (status "ready", nothing running yet) — leaves
+  running jobs alone. Scoped to MODEL_ID if given, else sweeps the whole
+  org (--prefix narrows the sweep). REQUIRES --yes for non-interactive use.
+  JSON output: {"cancelled": [{"id", "name", "result"}, ...]}
   Exit: 0 on success
 
 ### Server

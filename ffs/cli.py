@@ -16,6 +16,8 @@ from ffs import predictor_cmd
 from ffs import predict_cmd
 from ffs import server_cmd
 from ffs import train_cmd
+from ffs import jobs_cmd
+from ffs import network_cmd
 FEATRIX_UI = "https://featrix-ui.lovable.app"
 
 
@@ -194,6 +196,8 @@ main.add_command(predictor_cmd.predictor)
 main.add_command(predict_cmd.predict)
 main.add_command(train_cmd.train)
 main.add_command(server_cmd.server)
+main.add_command(jobs_cmd.jobs)
+main.add_command(network_cmd.network)
 
 
 def _emit_error(message, status=None):
