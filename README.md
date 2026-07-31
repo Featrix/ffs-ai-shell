@@ -73,6 +73,7 @@ ffs foundation encode MODEL_ID RECORD_JSON [--short]
 ffs foundation publish MODEL_ID --org ORG --name NAME
 ffs foundation unpublish MODEL_ID
 ffs foundation deprecate MODEL_ID --message MSG --expires DATE
+ffs foundation cancel MODEL_ID --yes [--reason TEXT]
 ffs foundation delete MODEL_ID
 ```
 
@@ -81,6 +82,22 @@ ffs foundation delete MODEL_ID
 ffs predictor create MODEL_ID --target-column COL --type {classifier,regressor} [--labels FILE] [--name NAME] [--epochs N]
 ffs predictor list MODEL_ID
 ffs predictor show MODEL_ID
+ffs predictor cancel MODEL_ID --yes [--reason TEXT]
+```
+
+### Jobs
+```
+ffs jobs list [--prefix NAME]                                        List sessions with jobs queued/running, org-wide
+ffs jobs cancel-queued [MODEL_ID] --yes [--prefix NAME] [--reason TEXT]  Cancel queued (not yet running) jobs
+```
+
+### PredictionNetworks
+```
+ffs network register NAME --spec-file FILE     Register or update a network's spec ({nodes, edges})
+ffs network show NAME                          Show a registered network's spec
+ffs network list                                List networks registered for your org
+ffs network predict NAME RECORD_JSON            Run a network against one record
+ffs network predict NAME --file FILE
 ```
 
 ### Predict

@@ -150,12 +150,23 @@ def whoami(state: ClientState):
         print_kv(identity, title="Featrix Identity")
 
 
+def _pkg_version(pkg):
+    import importlib
+    importlib.invalidate_caches()
+    from importlib.metadata import version, PackageNotFoundError
+    try:
+        return version(pkg)
+    except PackageNotFoundError:
+        return None
+
+
 @main.command()
 @click.option("--break-system-packages", is_flag=True, hidden=True, help="Pass --break-system-packages to pip")
 def upgrade(break_system_packages):
     """Upgrade featrix-shell and featrixsphere to latest."""
     for pkg in ("featrix-shell", "featrixsphere"):
-        console.print(f"Upgrading [bold]{pkg}[/bold]...")
+        before = _pkg_version(pkg)
+        console.print(f"Upgrading [bold]{pkg}[/bold] ({before or 'not installed'})...")
         cmd = [sys.executable, "-m", "pip", "install", "--upgrade", pkg]
         if break_system_packages:
             cmd.append("--break-system-packages")
@@ -164,7 +175,11 @@ def upgrade(break_system_packages):
             capture_output=True, text=True,
         )
         if result.returncode == 0:
-            console.print(f"  [green]done[/green]")
+            after = _pkg_version(pkg)
+            if before != after:
+                console.print(f"  [green]done[/green]: {before or 'not installed'} -> {after}")
+            else:
+                console.print(f"  [green]done[/green]: already {after}")
         else:
             console.print(f"  [red]failed[/red]: {result.stderr.strip()}")
 

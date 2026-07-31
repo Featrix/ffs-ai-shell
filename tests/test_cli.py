@@ -123,3 +123,13 @@ class TestUpgrade:
             result = runner.invoke(main, ["upgrade"])
             assert result.exit_code == 0  # upgrade doesn't fail the CLI
             assert "failed" in result.output
+
+    def test_upgrade_prints_before_and_after_versions(self, runner):
+        with patch("ffs.cli.subprocess.run") as mock_run, \
+             patch("ffs.cli._pkg_version") as mock_pkg_version:
+            mock_run.return_value = MagicMock(returncode=0, stderr="")
+            mock_pkg_version.side_effect = ["0.5.12", "0.5.13", "2.0.11488", "2.0.11810"]
+            result = runner.invoke(main, ["upgrade"])
+            assert result.exit_code == 0
+            assert "0.5.12" in result.output and "0.5.13" in result.output
+            assert "2.0.11488" in result.output and "2.0.11810" in result.output
