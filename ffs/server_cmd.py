@@ -1,11 +1,12 @@
 """ffs server subcommands."""
 import click
 
+from ffs.click_ext import DYMGroup
 from ffs.client import pass_client, ClientState
 from ffs.output import print_json, print_kv, console
 
 
-@click.group()
+@click.group(cls=DYMGroup)
 def server():
     """Server operations."""
     pass

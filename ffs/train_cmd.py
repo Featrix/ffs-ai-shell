@@ -1,11 +1,12 @@
 """ffs train subcommands."""
 import click
 
+from ffs.click_ext import DYMGroup
 from ffs.client import pass_client, ClientState
 from ffs.output import print_json, console
 
 
-@click.group()
+@click.group(cls=DYMGroup)
 def train():
     """Train models on existing embedding spaces."""
     pass

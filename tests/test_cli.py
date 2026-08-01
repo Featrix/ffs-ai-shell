@@ -109,6 +109,28 @@ class TestCliErrorHandling:
         assert data["error"]["status"] == 404
 
 
+class TestDidYouMean:
+    """Typo'd subcommands should suggest the closest real command."""
+
+    def test_suggests_close_match_at_top_level(self, runner):
+        result = runner.invoke(main, ["networks"])
+        assert result.exit_code == 2
+        assert "No such command 'networks'" in result.output
+        assert "Did you mean 'network'?" in result.output
+
+    def test_suggests_close_match_in_subgroup(self, runner):
+        result = runner.invoke(main, ["network", "lst"])
+        assert result.exit_code == 2
+        assert "No such command 'lst'" in result.output
+        assert "Did you mean 'list'?" in result.output
+
+    def test_no_suggestion_when_nothing_close(self, runner):
+        result = runner.invoke(main, ["zzzzzzzz"])
+        assert result.exit_code == 2
+        assert "No such command 'zzzzzzzz'" in result.output
+        assert "Did you mean" not in result.output
+
+
 class TestUpgrade:
     def test_upgrade_success(self, runner):
         with patch("ffs.cli.subprocess.run") as mock_run:

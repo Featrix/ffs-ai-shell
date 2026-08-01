@@ -10,6 +10,7 @@ from dataclasses import asdict
 
 import click
 
+from ffs.click_ext import DYMGroup
 from ffs.client import pass_client, ClientState
 from ffs.output import print_json, print_kv, print_list_table, console
 
@@ -42,7 +43,7 @@ def _get_network(state: ClientState, name: str):
     )
 
 
-@click.group()
+@click.group(cls=DYMGroup)
 def network():
     """Register and run PredictionNetworks — chains of your published models."""
     pass

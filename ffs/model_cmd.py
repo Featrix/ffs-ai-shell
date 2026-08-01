@@ -5,11 +5,12 @@ from datetime import datetime, timezone
 
 import click
 
+from ffs.click_ext import DYMGroup
 from ffs.client import pass_client, ClientState
 from ffs.output import print_json, print_kv, print_list_table, console
 
 
-@click.group()
+@click.group(cls=DYMGroup)
 def model():
     """Manage foundational models."""
     pass

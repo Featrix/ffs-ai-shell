@@ -144,6 +144,43 @@ ffs predictor cancel MODEL_ID --yes [--reason TEXT]
   Cancels whatever job is active on the predictor's session (queued or running).
   Exit: 0 on success
 
+### API Endpoints
+
+ffs endpoint create MODEL_ID --name NAME [--api-key KEY] [--description TEXT]
+  Create a named API endpoint for a predictor's foundation. If --api-key is
+  omitted, one is auto-generated and returned — it is only ever shown once.
+  JSON output: {"id", "name", "predictor_id", "session_id", "api_key", "description", "url", "created_at", "last_used_at", "usage_count"}
+  Exit: 0 on success
+
+ffs endpoint show MODEL_ID ENDPOINT_ID
+  Show endpoint details.
+  JSON fields: id, name, predictor_id, session_id, api_key, description, url, created_at, last_used_at, usage_count
+  Exit: 0 on success
+
+ffs endpoint stats MODEL_ID ENDPOINT_ID
+  Show usage statistics for an endpoint.
+  JSON output: {"usage_count", "last_used_at", ...}
+  Exit: 0 on success
+
+ffs endpoint regenerate-key MODEL_ID ENDPOINT_ID --yes
+  Rotate an endpoint's API key, invalidating the old one. REQUIRES --yes for non-interactive use.
+  JSON output: {"endpoint_id", "api_key"}
+  Exit: 0 on success
+
+ffs endpoint revoke-key MODEL_ID ENDPOINT_ID --yes
+  Remove an endpoint's API key — it becomes callable without authentication. REQUIRES --yes for non-interactive use.
+  JSON output: {"endpoint_id", "api_key": null}
+  Exit: 0 on success
+
+ffs endpoint delete MODEL_ID ENDPOINT_ID --yes
+  Delete an API endpoint. REQUIRES --yes for non-interactive use.
+  JSON output: {"endpoint_id", "deleted": true}
+  Exit: 0 on success
+
+NOTE: there is no `ffs endpoint list` — the API has no way to enumerate a
+predictor's endpoints, only create-one and get-by-id. Track ENDPOINT_ID
+yourself from the `create` output.
+
 ### Training (New Sessions)
 
 ffs train model ES_SESSION_ID --target-column COL --type classifier|regressor --data FILE [--name NAME] [--epochs N]

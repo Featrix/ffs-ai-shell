@@ -85,6 +85,16 @@ ffs predictor show MODEL_ID
 ffs predictor cancel MODEL_ID --yes [--reason TEXT]
 ```
 
+### API Endpoints
+```
+ffs endpoint create MODEL_ID --name NAME [--api-key KEY] [--description TEXT]  Create a named endpoint for a predictor
+ffs endpoint show MODEL_ID ENDPOINT_ID                                        Show endpoint details
+ffs endpoint stats MODEL_ID ENDPOINT_ID                                       Show usage statistics
+ffs endpoint regenerate-key MODEL_ID ENDPOINT_ID --yes                        Rotate the API key
+ffs endpoint revoke-key MODEL_ID ENDPOINT_ID --yes                            Remove the API key (endpoint becomes public)
+ffs endpoint delete MODEL_ID ENDPOINT_ID --yes                                Delete the endpoint
+```
+
 ### Jobs
 ```
 ffs jobs list [--prefix NAME]                                        List sessions with jobs queued/running, org-wide
