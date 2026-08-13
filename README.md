@@ -95,6 +95,13 @@ ffs endpoint revoke-key MODEL_ID ENDPOINT_ID --yes                            Re
 ffs endpoint delete MODEL_ID ENDPOINT_ID --yes                                Delete the endpoint
 ```
 
+### Events
+```
+ffs events list [--limit N] [--offset N]           List event groups registered for your org
+ffs events show EVENT_GROUP_ID                     Show a group's live event count and last-trained info
+```
+Read-only queries over event groups fed by the separate `featrixevents` library (apps post events; `ffs` only queries them).
+
 ### Jobs
 ```
 ffs jobs list [--prefix NAME]                                        List sessions with jobs queued/running, org-wide

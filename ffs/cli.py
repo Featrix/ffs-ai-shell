@@ -20,6 +20,7 @@ from ffs import train_cmd
 from ffs import jobs_cmd
 from ffs import network_cmd
 from ffs import endpoint_cmd
+from ffs import events_cmd
 FEATRIX_UI = "https://featrix-ui.lovable.app"
 
 
@@ -280,6 +281,7 @@ main.add_command(server_cmd.server)
 main.add_command(jobs_cmd.jobs)
 main.add_command(network_cmd.network)
 main.add_command(endpoint_cmd.endpoint)
+main.add_command(events_cmd.events)
 
 
 def _emit_error(message, status=None):

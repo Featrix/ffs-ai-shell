@@ -181,6 +181,35 @@ NOTE: there is no `ffs endpoint list` — the API has no way to enumerate a
 predictor's endpoints, only create-one and get-by-id. Track ENDPOINT_ID
 yourself from the `create` output.
 
+### Events
+
+Read-only queries over event groups fed by the separate `featrixevents`
+library (apps POST events to it, grouped by event_group_id; ffs never
+writes events, only queries what's accumulated).
+
+ffs events list [--limit N] [--offset N]
+  List event groups registered for your org. A group only appears here
+  once it has received at least one event (lazy registration) — an
+  event_group_id that's never been posted to never shows up. Default
+  limit 50, server caps at 200.
+  JSON output: [{"event_group_id", "event_count_at_last_train", "extend_count",
+    "auto_retrain_enabled", "last_session_id", "last_trained_at",
+    "consecutive_failures", "last_failed_at", "created_at", "updated_at"}, ...]
+  Note: event_count is omitted (null) in list results — it's a per-row live
+  count that's too expensive to compute for a whole page. Use `show` for it.
+  Exit: 0 on success
+
+ffs events show EVENT_GROUP_ID
+  Show one event group's detail, including a LIVE event count
+  (event_count) alongside the cheaper/possibly-stale
+  event_count_at_last_train recorded at the last training run.
+  last_session_id is the session ID of the last model trained/extended
+  from this group's events, if any.
+  JSON fields: event_group_id, event_count, event_count_at_last_train,
+    extend_count, auto_retrain_enabled, last_session_id, last_trained_at,
+    consecutive_failures, last_failed_at, created_at, updated_at
+  Exit: 0 on success; nonzero if the group isn't registered for your org (404)
+
 ### Training (New Sessions)
 
 ffs train model ES_SESSION_ID --target-column COL --type classifier|regressor --data FILE [--name NAME] [--epochs N]
