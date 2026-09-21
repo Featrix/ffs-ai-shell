@@ -47,12 +47,13 @@ class TestJobStatusLines:
         assert "train" in lines[0]
 
     def test_running_job_with_progress(self):
+        # The server reports job progress as a 0-1 fraction.
         data = {
             "job_plan": [{"job_type": "embed", "job_id": "j1"}],
-            "jobs": {"j1": {"status": "running", "progress": 42, "queue": "gpu-1"}},
+            "jobs": {"j1": {"status": "running", "progress": 0.42, "queue": "gpu-1"}},
         }
         lines = _job_status_lines(data)
-        assert "running 42%" in lines[0]
+        assert "running 42.0%" in lines[0]
         assert "gpu-1" in lines[0]
 
     def test_running_job_no_progress(self):
@@ -97,13 +98,25 @@ class TestFoundationCreate:
         assert kwargs["ignore_columns"] == ["age", "duration"]
 
 
+def _session(session_id, name, status="done", dimensions=128, epochs=10, final_loss=0.042):
+    """A FoundationalModel summary as list_sessions() returns it."""
+    s = MagicMock()
+    s.id, s.name, s.status = session_id, name, status
+    s.dimensions, s.epochs, s.final_loss = dimensions, epochs, final_loss
+    return s
+
+
 class TestFoundationList:
     def test_lists_models(self, runner, mock_sphere, env):
-        mock_sphere.list_sessions.return_value = ["session-1", "session-2"]
+        mock_sphere.list_sessions.return_value = [
+            _session("session-1", "credit-model"),
+            _session("session-2", "churn-model", status="running", final_loss=None),
+        ]
         result = runner.invoke(main, ["foundation", "list"], env=env)
-        assert result.exit_code == 0
+        assert result.exit_code == 0, result.output
         assert "session-1" in result.output
         assert "session-2" in result.output
+        assert "0.0420" in result.output
 
     def test_empty_list(self, runner, mock_sphere, env):
         mock_sphere.list_sessions.return_value = []
@@ -112,11 +125,12 @@ class TestFoundationList:
         assert "No models found" in result.output
 
     def test_json_output(self, runner, mock_sphere, env):
-        mock_sphere.list_sessions.return_value = ["s1"]
+        mock_sphere.list_sessions.return_value = [_session("s1", "credit-model")]
         result = runner.invoke(main, ["--json", "foundation", "list"], env=env)
-        assert result.exit_code == 0
+        assert result.exit_code == 0, result.output
         data = json.loads(result.output)
-        assert data == ["s1"]
+        assert data == [{"id": "s1", "name": "credit-model", "status": "done",
+                         "dimensions": 128, "epochs": 10, "final_loss": 0.042}]
 
 
 class TestFoundationShow:
