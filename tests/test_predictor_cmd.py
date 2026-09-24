@@ -137,3 +137,51 @@ class TestPredictorCancel:
         result = runner.invoke(main, ["predictor", "cancel", "fm-abc123", "--yes"], env=env)
         assert result.exit_code != 0
         assert "No predictor found" in result.output
+
+
+class TestPredictorShowFailedTraining:
+    """A dead training job leaves the predictor listed but unservable.
+
+    `predictor show` has to say so: predicting against it returns empty fields
+    rather than an error, so silence here turns into a confusing prediction bug
+    later.
+    """
+
+    def test_warns_that_there_is_no_servable_model(
+        self, runner, mock_sphere, mock_fm, mock_predictor, env
+    ):
+        mock_predictor.status = "aborted"
+        mock_fm.list_predictors.return_value = [mock_predictor]
+        mock_sphere.foundational_model.return_value = mock_fm
+        result = runner.invoke(main, ["predictor", "show", "fm-abc123"], env=env)
+        assert result.exit_code == 0, result.output
+        assert "No servable model" in result.output
+        assert "aborted" in result.output
+
+    def test_points_at_the_jobs_command(
+        self, runner, mock_sphere, mock_fm, mock_predictor, env
+    ):
+        mock_predictor.status = "failed"
+        mock_fm.list_predictors.return_value = [mock_predictor]
+        mock_sphere.foundational_model.return_value = mock_fm
+        result = runner.invoke(main, ["predictor", "show", "fm-abc123"], env=env)
+        assert "jobs fm-abc123" in result.output
+
+    def test_no_warning_for_a_healthy_predictor(
+        self, runner, mock_sphere, mock_fm, mock_predictor, env
+    ):
+        mock_predictor.status = "done"
+        mock_fm.list_predictors.return_value = [mock_predictor]
+        mock_sphere.foundational_model.return_value = mock_fm
+        result = runner.invoke(main, ["predictor", "show", "fm-abc123"], env=env)
+        assert "No servable model" not in result.output
+
+    def test_queued_is_shown_as_queued_not_ready(
+        self, runner, mock_sphere, mock_fm, mock_predictor, env
+    ):
+        """"ready" from the job record means queued; printing it raw misleads."""
+        mock_predictor.status = "ready"
+        mock_fm.list_predictors.return_value = [mock_predictor]
+        mock_sphere.foundational_model.return_value = mock_fm
+        result = runner.invoke(main, ["predictor", "show", "fm-abc123"], env=env)
+        assert "queued" in result.output

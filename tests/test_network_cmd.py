@@ -192,3 +192,20 @@ class TestPredict:
     def test_predict_no_input_errors(self, runner, mock_sphere, env):
         result = runner.invoke(main, ["network", "predict", "net1"], env=env)
         assert result.exit_code != 0
+
+
+class TestNetworkOrgResolution:
+    """PredictionNetworks are org-scoped, and the org comes from the API key."""
+
+    def test_errors_when_the_key_resolves_to_no_org(self, runner, mock_sphere, env):
+        mock_sphere.whoami.return_value = {"user": "testuser"}  # no org_slug
+        result = runner.invoke(main, ["network", "list"], env=env)
+        assert result.exit_code != 0
+        assert "ffs whoami" in result.output
+
+    def test_passes_the_resolved_org_to_the_sdk(self, runner, mock_sphere, env):
+        mock_sphere.whoami.return_value = {"org_slug": "acme-co"}
+        mock_sphere.list_prediction_networks.return_value = []
+        result = runner.invoke(main, ["network", "list"], env=env)
+        assert result.exit_code == 0, result.output
+        mock_sphere.list_prediction_networks.assert_called_once_with("acme-co")

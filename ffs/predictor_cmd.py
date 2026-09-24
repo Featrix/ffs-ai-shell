@@ -4,6 +4,9 @@ import click
 from ffs.click_ext import DYMGroup
 from ffs.client import pass_client, ClientState
 from ffs.output import print_json, print_kv, print_list_table, console
+from featrixsphere.api.foundational_model import JOB_PRIORITIES
+
+from ffs.predict_health import FAILED_STATUSES, display_status
 
 
 @click.group(cls=DYMGroup)
@@ -19,8 +22,11 @@ def predictor():
 @click.option("--labels", "labels_file", default=None, type=click.Path(exists=True), help="Separate labels file (CSV/JSON/Parquet)")
 @click.option("--name", default=None, help="Predictor name")
 @click.option("--epochs", type=int, default=0, help="Training epochs (auto if 0)")
+@click.option("--priority", type=click.Choice(JOB_PRIORITIES), default=None,
+              help="Queue priority: urgent jumps the queue (default: your org's tier)")
 @pass_client
-def create(state: ClientState, model_id, target_column, pred_type, labels_file, name, epochs):
+def create(state: ClientState, model_id, target_column, pred_type, labels_file, name, epochs,
+           priority):
     """Train a predictor on a foundation.
 
     If --labels is given, the labels are joined to the foundation's data
@@ -30,6 +36,9 @@ def create(state: ClientState, model_id, target_column, pred_type, labels_file, 
     kwargs = dict(target_column=target_column, name=name, epochs=epochs)
     if labels_file:
         kwargs["labels_file"] = labels_file
+    # Forwarded through the SDK's **kwargs into the train_predictor payload.
+    if priority:
+        kwargs["priority"] = priority
 
     if pred_type == "classifier":
         p = fm.create_binary_classifier(**kwargs)
@@ -42,7 +51,7 @@ def create(state: ClientState, model_id, target_column, pred_type, labels_file, 
     else:
         console.print(f"[green]Predictor created:[/green] {p.id}")
         console.print(f"Target: {p.target_column}  Type: {pred_type}")
-        console.print(f"Status: {p.status}")
+        console.print(f"Status: {display_status(p.status)}")
         console.print(f"\nRun [bold]ffs foundation wait {p.session_id}[/bold] to monitor training.")
 
 
@@ -64,7 +73,7 @@ def list_predictors(state: ClientState, model_id):
                 "ID": p.id or "—",
                 "Target": p.target_column,
                 "Type": p.target_type,
-                "Status": p.status or "—",
+                "Status": display_status(p.status),
                 "Accuracy": f"{p.accuracy:.4f}" if p.accuracy else "—",
             })
         print_list_table(rows, ["ID", "Target", "Type", "Status", "Accuracy"])
@@ -94,7 +103,7 @@ def show(state: ClientState, model_id):
             "Session ID": p.session_id,
             "Target": p.target_column,
             "Type": p.target_type,
-            "Status": p.status or "—",
+            "Status": display_status(p.status),
         }
         if p.accuracy is not None:
             data["Accuracy"] = f"{p.accuracy:.4f}"
@@ -103,6 +112,14 @@ def show(state: ClientState, model_id):
         if p.f1 is not None:
             data["F1"] = f"{p.f1:.4f}"
         print_kv(data, title="Predictor")
+        # A dead training job leaves the predictor listed but unservable —
+        # predicting against it comes back empty rather than erroring.
+        if p.status in FAILED_STATUSES:
+            console.print(
+                f"\n[red]No servable model: this predictor's training job "
+                f"{display_status(p.status)}.[/red]"
+            )
+            console.print(f"[dim]Details: ffs foundation jobs {p.session_id}[/dim]")
 
 
 @predictor.command()

@@ -7,7 +7,17 @@ import click
 
 from ffs.click_ext import DYMGroup
 from ffs.client import pass_client, ClientState
+from featrixsphere.api.foundational_model import JOB_PRIORITIES
+
 from ffs.output import print_json, print_kv, print_list_table, console
+from ffs.predict_health import (
+    FAILED_STATUSES,
+    TERMINAL_STATUSES,
+    display_status,
+    not_ready_reason,
+    require_predictions,
+    unusable_prediction_error,
+)
 
 
 @click.group(cls=DYMGroup)
@@ -21,16 +31,20 @@ def model():
 @click.option("--data", "data_file", required=True, type=click.Path(exists=True), help="CSV/Parquet/JSON file")
 @click.option("--epochs", type=int, default=None, help="Training epochs (auto if omitted)")
 @click.option("--ignore-columns", default=None, help="Comma-separated columns to ignore")
+@click.option("--priority", type=click.Choice(JOB_PRIORITIES), default=None,
+              help="Queue priority: urgent jumps the queue (default: your org's tier)")
 @pass_client
-def create(state: ClientState, name, data_file, epochs, ignore_columns):
+def create(state: ClientState, name, data_file, epochs, ignore_columns, priority):
     """Create a new foundational model from data."""
     ignore = [c.strip() for c in ignore_columns.split(",")] if ignore_columns else None
+    kwargs = {"priority": priority} if priority else {}
     fm = state.client.create_foundational_model(
         name=name,
         data_file=data_file,
         ignore_columns=ignore,
         epochs=epochs,
         session_name_prefix=name,
+        **kwargs,
     )
     if state.output_json:
         print_json({"model_id": fm.id, "status": fm.status})
@@ -134,7 +148,7 @@ def _show_one_model(state, fm):
         console.print(f"\n  [bold]Predictors:[/bold]")
         for p in predictors:
             acc = f"  acc={p.accuracy:.3f}" if p.accuracy else ""
-            console.print(f"    {p.target_column} ({p.target_type}) — {p.status or '?'}{acc}")
+            console.print(f"    {p.target_column} ({p.target_type}) — {display_status(p.status)}{acc}")
     return None
 
 
@@ -370,21 +384,21 @@ def jobs(state: ClientState, model_id):
             console.print(f"  [red]Error:[/red] {j.get('job_type', '?')}: {j.get('error')}")
 
 
-_TERMINAL_PREDICTOR_STATUSES = {"done", "error", "failed", "cancelled"}
-
-
-def _pending_predictors(fm):
-    """Predictors attached to this model that haven't reached a terminal status.
+def _predictor_states(fm):
+    """(still-running, dead) predictors attached to this model.
 
     fm.status reflects the ES/session lifecycle, which can hit "done" while an
-    attached SP predictor is still training — checked separately here so `wait`
-    doesn't report success before the predictor is actually servable.
+    attached SP predictor is still training — or after one died — so `wait`
+    checks the predictors separately rather than calling the session's status
+    the whole story.
     """
     try:
         predictors = fm.list_predictors()
     except Exception:
-        return []
-    return [p for p in predictors if p.status not in _TERMINAL_PREDICTOR_STATUSES]
+        return [], []
+    pending = [p for p in predictors if p.status not in TERMINAL_STATUSES]
+    failed = [p for p in predictors if p.status in FAILED_STATUSES]
+    return pending, failed
 
 
 @model.command()
@@ -402,7 +416,19 @@ def wait(state: ClientState, model_id, poll_interval, timeout):
         data = fm.refresh()
         elapsed = int(time.time() - start)
 
-        pending_predictors = _pending_predictors(fm) if fm.status == "done" else []
+        pending_predictors, failed_predictors = (
+            _predictor_states(fm) if fm.status == "done" else ([], [])
+        )
+
+        # A predictor can die (its training subprocess aborts) after the ES
+        # itself finished — the session still says "done", so this is the only
+        # place that catches it.
+        if failed_predictors:
+            console.print(f"\n[red]Predictor training failed.[/red]")
+            for p in failed_predictors:
+                console.print(f"  {p.target_column or p.id}: {display_status(p.status)}")
+            console.print(f"\n[dim]Details: ffs foundation jobs {model_id}[/dim]")
+            raise SystemExit(1)
 
         if fm.status == "done" and not pending_predictors:
             console.print(f"\n[green]Training complete.[/green]")
@@ -504,13 +530,17 @@ def recent(state: ClientState, limit):
         console.print(f"{status_fmt}  {s.id}{name_str}{dims}")
 
 
-def _predict_on_es(fm, target_column, record):
-    """Predict using the ES's built-in predictor for any column."""
-    payload = {
-        "query_record": record,
-        "target_column": target_column,
-    }
-    return fm._ctx.post_json(f"/session/{fm.id}/predict", data=payload)
+def _predict_on_foundation(fm, target_column, records):
+    """Predict a column straight from the foundation model, with no trained SP.
+
+    Goes through fm.foundation_predict(), which fits lightweight probe models
+    on the frozen embeddings for `target_column`. The single-predictor endpoint
+    cannot stand in for this: it ignores target_column entirely and serves
+    whatever SP the session happens to have, so aiming it at an untrained
+    column answers for a different one.
+    """
+    results = fm.foundation_predict(target_column, list(records))
+    return results if isinstance(results, list) else [results]
 
 
 def _find_trained_predictor(fm, target_column, predictor_id=None):
@@ -531,41 +561,32 @@ def _find_trained_predictor(fm, target_column, predictor_id=None):
 
 
 def _format_prediction_data(result):
-    """Format prediction result dict or object into display dict."""
-    # Handle both raw API dicts and PredictionResult objects
-    if isinstance(result, dict):
-        data = {}
-        pred = result.get("prediction") or result.get("predicted_class")
-        if pred is not None:
-            data["Predicted"] = str(pred)
-        conf = result.get("confidence")
-        if conf is not None:
-            data["Confidence"] = f"{conf:.4f}"
-        prob = result.get("probability")
-        if prob is not None:
-            data["Probability"] = f"{prob:.4f}"
-        probs = result.get("probabilities")
-        if probs:
-            data["Distribution"] = "  ".join(f"{k}: {v:.3f}" for k, v in probs.items())
-        uuid = result.get("prediction_uuid")
-        if uuid:
-            data["Prediction UUID"] = uuid
-        return data
-
+    """Format a PredictionResult into a display dict."""
     data = {}
     if result.predicted_class is not None:
         data["Predicted"] = result.predicted_class
-    elif hasattr(result, "prediction") and result.prediction is not None:
+    elif result.prediction is not None:
         data["Predicted"] = str(result.prediction)
     if result.confidence is not None:
         data["Confidence"] = f"{result.confidence:.4f}"
-    if hasattr(result, "probability") and result.probability is not None:
+    if result.probability is not None:
         data["Probability"] = f"{result.probability:.4f}"
-    if hasattr(result, "probabilities") and result.probabilities:
+    if result.probabilities:
         data["Distribution"] = "  ".join(f"{k}: {v:.3f}" for k, v in result.probabilities.items())
-    if hasattr(result, "prediction_uuid") and result.prediction_uuid:
+    if result.prediction_uuid:
         data["Prediction UUID"] = result.prediction_uuid
     return data
+
+
+def _prediction_rows(results):
+    """Numbered table rows for a batch of predictions."""
+    rows = []
+    for i, r in enumerate(results):
+        row = {"#": str(i + 1)}
+        d = _format_prediction_data(r)
+        row.update({k: str(v) for k, v in d.items() if k != "Prediction UUID"})
+        rows.append(row)
+    return rows
 
 
 @model.command("predict")
@@ -575,26 +596,55 @@ def _format_prediction_data(result):
 @click.option("--predictor-id", default=None, help="Use a specific trained predictor by ID")
 @click.option("--file", "data_file", type=click.Path(exists=True),
               help="Batch predict from file (CSV, JSON, Parquet)")
+@click.option("--foundation", "use_foundation", is_flag=True,
+              help="Predict from the foundation model, ignoring any trained predictor")
 @click.option("--explain", is_flag=True, help="Include feature importance (trained predictors only)")
 @pass_client
 def model_predict(state: ClientState, model_id, target_column, record_json,
-                  predictor_id, data_file, explain):
-    """Predict a column using the ES built-in predictor or a trained SP.
+                  predictor_id, data_file, use_foundation, explain):
+    """Predict a column using a trained predictor or the foundation model.
 
-    Every column in an ES can be predicted directly. If a trained predictor
-    exists for the target column, it will be used automatically.
+    Every column in a foundation model can be predicted directly. A trained
+    predictor for the target column is used automatically when there is one;
+    --foundation predicts from the foundation model either way.
 
     \b
-    Single:  ffs models predict ES_ID melody_t3 '{"melody_t0": 60, "melody_t1": 62}'
-    Batch:   ffs models predict ES_ID churned --file data.csv
+    Single:  ffs foundation predict ES_ID melody_t3 '{"melody_t0": 60, "melody_t1": 62}'
+    Batch:   ffs foundation predict ES_ID churned --file data.csv
     """
     if not record_json and not data_file:
         raise click.ClickException("Provide a JSON record or --file")
+    if use_foundation and predictor_id:
+        raise click.ClickException("--foundation and --predictor-id are mutually exclusive")
 
     fm = state.client.foundational_model(model_id)
 
-    # Check for a trained SP predictor first; fall back to ES built-in
-    trained = _find_trained_predictor(fm, target_column, predictor_id)
+    trained = None if use_foundation else _find_trained_predictor(fm, target_column, predictor_id)
+
+    # Answering from the foundation model when a specific predictor was named
+    # would be a different model's answer, not a fallback.
+    if predictor_id and trained is None:
+        raise click.ClickException(f"No predictor with ID '{predictor_id}' on {model_id}")
+
+    # A predictor whose training job is queued, running or dead has no servable
+    # model behind it: the server answers with every field null rather than an
+    # error. Say so instead of quietly switching models.
+    if trained is not None:
+        reason = not_ready_reason(trained)
+        if reason:
+            raise unusable_prediction_error(
+                state, fm.id, target_column=target_column, reason=reason,
+                hint=(f"Or use the foundation model: ffs foundation predict "
+                      f"{model_id} {target_column} --foundation ..."),
+            )
+
+    if explain and trained is None:
+        raise click.ClickException(
+            "--explain needs a trained predictor; the foundation model doesn't "
+            "support feature importance."
+        )
+
+    source = "trained predictor" if trained else "foundation"
 
     if data_file:
         import pandas as pd
@@ -610,59 +660,40 @@ def model_predict(state: ClientState, model_id, target_column, record_json,
 
         if trained:
             results = trained.batch_predict(df)
-            if state.output_json:
-                print_json([r.to_dict() for r in results])
-            else:
-                console.print(f"[green]{len(results)} predictions[/green] (trained predictor)\n")
-                rows = []
-                for i, r in enumerate(results):
-                    row = {"#": str(i + 1)}
-                    d = _format_prediction_data(r)
-                    row.update({k: str(v) for k, v in d.items() if k != "Prediction UUID"})
-                    rows.append(row)
-                if rows:
-                    print_list_table(rows, list(rows[0].keys()))
         else:
-            records = df.to_dict(orient="records")
-            results = []
-            for rec in records:
-                results.append(_predict_on_es(fm, target_column, rec))
-            if state.output_json:
-                print_json(results)
-            else:
-                console.print(f"[green]{len(results)} predictions[/green] (ES built-in)\n")
-                rows = []
-                for i, r in enumerate(results):
-                    row = {"#": str(i + 1)}
-                    d = _format_prediction_data(r)
-                    row.update({k: str(v) for k, v in d.items() if k != "Prediction UUID"})
-                    rows.append(row)
-                if rows:
-                    print_list_table(rows, list(rows[0].keys()))
+            results = _predict_on_foundation(fm, target_column, df.to_dict(orient="records"))
+        require_predictions(state, fm.id, results, target_column=target_column)
+
+        if state.output_json:
+            print_json([r.to_dict() for r in results])
+        else:
+            console.print(f"[green]{len(results)} predictions[/green] ({source})\n")
+            rows = _prediction_rows(results)
+            if rows:
+                print_list_table(rows, list(rows[0].keys()))
         return
 
     record = json.loads(record_json)
 
     if trained:
-        result = trained.predict(record, feature_importance=explain)
-        if state.output_json:
-            print_json(result.to_dict())
-        else:
-            data = _format_prediction_data(result)
-            if explain and hasattr(result, "feature_importance") and result.feature_importance:
-                data["Feature Importance"] = ""
-                print_kv(data, title="Prediction (trained)")
-                for col, score in result.feature_importance.items():
-                    console.print(f"  {col}: {score:.4f}")
-            else:
-                print_kv(data, title="Prediction (trained)")
+        results = [trained.predict(record, feature_importance=explain)]
     else:
-        result = _predict_on_es(fm, target_column, record)
-        if state.output_json:
-            print_json(result)
-        else:
-            data = _format_prediction_data(result)
-            print_kv(data, title="Prediction (ES built-in)")
+        results = _predict_on_foundation(fm, target_column, [record])
+    require_predictions(state, fm.id, results, target_column=target_column)
+    result = results[0]
+
+    if state.output_json:
+        print_json(result.to_dict())
+        return
+
+    data = _format_prediction_data(result)
+    if explain and result.feature_importance:
+        data["Feature Importance"] = ""
+        print_kv(data, title=f"Prediction ({source})")
+        for col, score in result.feature_importance.items():
+            console.print(f"  {col}: {score:.4f}")
+    else:
+        print_kv(data, title=f"Prediction ({source})")
 
 
 @model.command()

@@ -5,6 +5,7 @@ import click
 
 from ffs.client import pass_client, ClientState
 from ffs.output import print_json, print_kv, print_list_table, console
+from ffs.predict_health import not_ready_reason, require_predictions, unusable_prediction_error
 
 
 def _read_data_file(path: str):
@@ -22,14 +23,33 @@ def _read_data_file(path: str):
 
 
 def _get_predictor(state, model_id, target_column=None):
-    """Get a predictor, optionally filtering by target column."""
+    """Get a predictor, optionally filtering by target column.
+
+    Always through fm.list_predictors(). state.client.predictor() hands back a
+    Predictor whose .id is the *session* id rather than the predictor's own, and
+    the prediction endpoint 404s on that — so `ffs predict MODEL_ID RECORD`, the
+    documented form with no --target-column, never reached a model at all.
+    """
+    fm = state.client.foundational_model(model_id)
+    predictors = fm.list_predictors()
+
     if target_column:
-        fm = state.client.foundational_model(model_id)
-        for p in fm.list_predictors():
+        for p in predictors:
             if p.target_column == target_column:
                 return p
-        raise click.ClickException(f"No predictor found for target '{target_column}' on {model_id}")
-    return state.client.predictor(model_id)
+        raise click.ClickException(
+            f"No predictor found for target '{target_column}' on {model_id}"
+        )
+
+    if not predictors:
+        raise click.ClickException(f"No predictor found in session {model_id}")
+    if len(predictors) > 1:
+        targets = ", ".join(p.target_column or p.id for p in predictors)
+        raise click.ClickException(
+            f"{model_id} has {len(predictors)} predictors ({targets}) — "
+            f"choose one with --target-column"
+        )
+    return predictors[0]
 
 
 @click.command()
@@ -51,9 +71,19 @@ def predict(state: ClientState, model_id, record_json, data_file, target_column,
 
     p = _get_predictor(state, model_id, target_column)
 
+    # A predictor whose training job is queued, running or dead has no servable
+    # model: the server answers with every field null rather than an error.
+    reason = not_ready_reason(p)
+    if reason:
+        raise unusable_prediction_error(
+            state, p.session_id, target_column=target_column or p.target_column, reason=reason,
+        )
+    target = target_column or p.target_column
+
     if data_file:
         df = _read_data_file(data_file)
         results = p.batch_predict(df)
+        require_predictions(state, p.session_id, results, target_column=target)
         if state.output_json:
             print_json([r.to_dict() for r in results])
         else:
@@ -73,6 +103,7 @@ def predict(state: ClientState, model_id, record_json, data_file, target_column,
     else:
         record = json.loads(record_json)
         result = p.predict(record, feature_importance=explain)
+        require_predictions(state, p.session_id, [result], target_column=target)
         if state.output_json:
             print_json(result.to_dict())
         else:

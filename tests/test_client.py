@@ -2,9 +2,17 @@
 import json
 import os
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from ffs.client import load_config_from, find_featrix_config, ClientState
+import click
+import pytest
+
+from ffs.client import (
+    ClientState,
+    _is_git_tracked,
+    find_featrix_config,
+    load_config_from,
+)
 
 
 class TestLoadConfig:
@@ -67,3 +75,78 @@ class TestClientState:
         state = ClientState(server="https://test.com", cluster=None, output_json=False, quiet=False)
         with patch("ffs.client.find_featrix_config", return_value=(None, "not found")):
             assert state.config_source == "not found"
+
+
+class TestGitTrackedConfigGuard:
+    """A .featrix committed to git pushes the user's API key to the remote.
+
+    find_featrix_config() refuses to hand back a tracked config rather than
+    quietly using it, so these tests cover the refusal and — just as important —
+    that it doesn't fire on the ordinary untracked case.
+    """
+
+    def test_refuses_a_tracked_config(self, tmp_path, monkeypatch):
+        config = tmp_path / ".featrix"
+        config.write_text('{"api_key": "fx_secret"}')
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "elsewhere"))
+        with patch("ffs.client._is_git_tracked", return_value=True):
+            with pytest.raises(click.ClickException) as exc:
+                find_featrix_config()
+        message = exc.value.format_message()
+        assert "DANGER" in message
+        assert "git rm --cached" in message
+        assert "rotate your api key" in message.lower()
+
+    def test_allows_an_untracked_config(self, tmp_path, monkeypatch):
+        config = tmp_path / ".featrix"
+        config.write_text('{"api_key": "fx_secret"}')
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "elsewhere"))
+        with patch("ffs.client._is_git_tracked", return_value=False):
+            found, _ = find_featrix_config()
+        assert found == config
+
+    def test_does_not_check_the_home_config(self, tmp_path, monkeypatch):
+        """~/.featrix is the documented global location; it isn't in a repo."""
+        home = tmp_path / "home"
+        home.mkdir()
+        (home / ".featrix").write_text('{"api_key": "fx_secret"}')
+        monkeypatch.chdir(home)
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+        with patch("ffs.client._is_git_tracked", return_value=True) as tracked:
+            found, source = find_featrix_config()
+        assert found == home / ".featrix"
+        assert source == "~/.featrix"
+        tracked.assert_not_called()
+
+    def test_falls_back_to_the_home_config_from_an_unrelated_directory(
+        self, tmp_path, monkeypatch
+    ):
+        home = tmp_path / "home"
+        home.mkdir()
+        (home / ".featrix").write_text('{"api_key": "fx_secret"}')
+        work = tmp_path / "work"
+        work.mkdir()
+        monkeypatch.chdir(work)
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+        found, source = find_featrix_config()
+        assert found == home / ".featrix"
+        assert source == "~/.featrix"
+
+
+class TestIsGitTracked:
+    def test_tracked_file(self, tmp_path):
+        with patch("ffs.client.subprocess.run") as run:
+            run.return_value = MagicMock(returncode=0)
+            assert _is_git_tracked(tmp_path / ".featrix") is True
+
+    def test_untracked_file(self, tmp_path):
+        with patch("ffs.client.subprocess.run") as run:
+            run.return_value = MagicMock(returncode=1)
+            assert _is_git_tracked(tmp_path / ".featrix") is False
+
+    def test_treats_a_missing_git_binary_as_untracked(self, tmp_path):
+        """No git means no repo to leak into — and must not crash every command."""
+        with patch("ffs.client.subprocess.run", side_effect=FileNotFoundError):
+            assert _is_git_tracked(tmp_path / ".featrix") is False

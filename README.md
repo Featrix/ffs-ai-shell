@@ -62,14 +62,17 @@ ffs upgrade                                 Upgrade featrix-shell and featrixsph
 
 ### Foundation (Foundational Models / Embedding Spaces)
 ```
-ffs foundation create --name NAME --data FILE [--epochs N] [--ignore-columns COL,COL]
+ffs foundation create --name NAME --data FILE [--epochs N] [--ignore-columns COL,COL] [--priority urgent|regular|low]
 ffs foundation list [--prefix PREFIX]
 ffs foundation show MODEL_ID
 ffs foundation columns MODEL_ID
 ffs foundation card MODEL_ID
 ffs foundation wait MODEL_ID [--poll-interval N] [--timeout N]
+ffs foundation jobs MODEL_ID
 ffs foundation extend MODEL_ID --data FILE [--epochs N]
 ffs foundation encode MODEL_ID RECORD_JSON [--short]
+ffs foundation predict MODEL_ID COLUMN RECORD_JSON [--predictor-id ID] [--foundation] [--explain]
+ffs foundation predict MODEL_ID COLUMN --file FILE
 ffs foundation publish MODEL_ID --org ORG --name NAME
 ffs foundation unpublish MODEL_ID
 ffs foundation deprecate MODEL_ID --message MSG --expires DATE
@@ -79,11 +82,17 @@ ffs foundation delete MODEL_ID
 
 ### Predictors
 ```
-ffs predictor create MODEL_ID --target-column COL --type {classifier,regressor} [--labels FILE] [--name NAME] [--epochs N]
+ffs predictor create MODEL_ID --target-column COL --type {classifier,regressor} [--labels FILE] [--name NAME] [--epochs N] [--priority urgent|regular|low]
 ffs predictor list MODEL_ID
 ffs predictor show MODEL_ID
 ffs predictor cancel MODEL_ID --yes [--reason TEXT]
 ```
+
+`--priority urgent` puts the job ahead of the organization's other *pending*
+jobs. It does not preempt one that is already running.
+
+A predictor's status is its training job's status: `queued` means the job has
+not started, and only `done` means there is a model to predict with.
 
 ### API Endpoints
 ```
@@ -123,6 +132,17 @@ ffs predict MODEL_ID '{"col": "val"}'                          Single prediction
 ffs predict MODEL_ID --file FILE [--target-column COL]         Batch (CSV, JSON, Parquet)
 ffs predict MODEL_ID '{"col": "val"}' --explain                Include feature importance
 ```
+
+Predictions fail loudly rather than returning empty results. A predictor is only
+servable once its `train_single_predictor` job has finished: while that job is
+queued (shown as `queued`, not `ready`), running, or after it died, the server
+answers with every field null. `ffs predict` and `ffs foundation predict` turn
+that into an error naming the job and its status — run `ffs foundation jobs
+MODEL_ID` for the full picture.
+
+`ffs foundation predict` uses a trained predictor for the target column when
+there is one and the foundation model's probes otherwise; `--foundation` forces
+the foundation model either way. It never silently swaps one for the other.
 
 ### Vector Database (not yet implemented)
 ```
