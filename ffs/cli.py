@@ -3,13 +3,21 @@ import os
 import socket
 import subprocess
 import sys
+import tempfile
 import webbrowser
 from pathlib import Path
 from urllib.parse import urlencode
 
 import click
 
-from ffs.client import pass_client, ClientState, find_featrix_config, load_config_from
+from ffs.client import (
+    CWD_GONE_HINT,
+    ClientState,
+    load_config_from,
+    pass_client,
+    repair_cwd,
+    safe_cwd,
+)
 from ffs.click_ext import DYMGroup
 from ffs.output import print_json, print_kv, console
 from ffs import model_cmd
@@ -103,7 +111,20 @@ def login(ctx, api_key, save_global):
         console.print("Copy the API key from the browser and paste it here.\n")
         api_key = click.prompt("API key", hide_input=True)
 
-    config_path = Path.home() / ".featrix" if save_global else Path.cwd() / ".featrix"
+    if save_global:
+        config_path = Path.home() / ".featrix"
+    else:
+        # A project-local .featrix has nowhere to go if the directory it would
+        # live in is gone. Say that, and name the way out, rather than letting
+        # Path.cwd() raise a bare errno.
+        cwd = safe_cwd()
+        if cwd is None:
+            raise click.ClickException(
+                f"{CWD_GONE_HINT}\n\n"
+                "  Or save credentials globally instead:\n\n"
+                "    ffs login --global\n"
+            )
+        config_path = cwd / ".featrix"
 
     # Read existing config if present
     config = {}
@@ -167,6 +188,16 @@ def _pkg_version(pkg):
 @click.option("--break-system-packages", is_flag=True, hidden=True, help="Pass --break-system-packages to pip")
 def upgrade(break_system_packages):
     """Upgrade featrix-shell and featrixsphere to latest."""
+    # pip reads os.getcwd() in its own __main__ before doing anything, so a
+    # deleted or unmounted working directory kills it on startup with a bare
+    # FileNotFoundError traceback. Nothing about upgrading needs the cwd, so
+    # run it somewhere that exists instead of passing the problem along.
+    run_cwd = None
+    if safe_cwd() is None:
+        run_cwd = tempfile.gettempdir()
+        console.print(f"[yellow]Note:[/yellow] {CWD_GONE_HINT}")
+        console.print(f"[dim]Running pip from {run_cwd} for now.[/dim]")
+
     for pkg in ("featrix-shell", "featrixsphere"):
         before = _pkg_version(pkg)
         console.print(f"Upgrading [bold]{pkg}[/bold] ({before or 'not installed'})...")
@@ -175,6 +206,7 @@ def upgrade(break_system_packages):
             cmd.append("--break-system-packages")
         result = subprocess.run(
             cmd,
+            cwd=run_cwd,
             capture_output=True, text=True,
         )
         if result.returncode == 0:
@@ -297,6 +329,11 @@ def _emit_error(message, status=None):
 
 def cli():
     """Entry point that catches exceptions cleanly."""
+    # Before anything reads the filesystem: if the working directory's handle
+    # went stale (a remount, a replaced directory) but its path still resolves,
+    # step back into it. Cheap, and it keeps every cwd-dependent thing below
+    # working instead of each needing its own fallback.
+    repair_cwd()
     try:
         main(standalone_mode=False)
     except click.ClickException as e:
@@ -306,5 +343,11 @@ def cli():
         raise
     except Exception as e:
         status = getattr(getattr(e, "response", None), "status_code", None)
-        _emit_error(str(e), status=status)
+        message = str(e)
+        # Last resort for anything else that depends on the working directory --
+        # a relative --data path, a --save target. "[Errno 2] No such file or
+        # directory" with no filename in it is almost always this.
+        if isinstance(e, OSError) and safe_cwd() is None:
+            message = f"{message}\n\n{CWD_GONE_HINT}"
+        _emit_error(message, status=status)
         sys.exit(1)

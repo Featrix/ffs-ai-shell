@@ -205,3 +205,10 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Featrix credentials
+# `ffs login` writes an API key into ./.featrix. ffs refuses to *use* a .featrix
+# that git tracks (find_featrix_config raises), but this repo is public, so keep
+# the file out of the index in the first place.
+.featrix
+.featrix.json

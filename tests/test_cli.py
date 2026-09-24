@@ -280,9 +280,9 @@ class TestLoginBrowserFlow:
             with patch("ffs.cli.webbrowser.open"), \
                  patch("ffs.cli.socket.gethostname", return_value="devbox"), \
                  patch("featrixsphere.api.FeatrixSphere"), \
-                 patch.dict(os.environ, {"USER": "mitch"}):
+                 patch.dict(os.environ, {"USER": "devuser"}):
                 result = runner.invoke(main, ["login"], input="fx_k\n")
-            assert "mitch@devbox" in result.output
+            assert "devuser@devbox" in result.output
 
     def test_survives_a_browser_that_cannot_open(self, runner):
         """Headless boxes can't open a browser; the URL is printed for copying."""

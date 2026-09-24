@@ -85,6 +85,25 @@ def spec_mock(cls, **attrs):
     return m
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_env(request, monkeypatch):
+    """Keep the developer's own Featrix env vars out of the mocked tests.
+
+    A real FEATRIX_API_KEY in the shell silently changes behaviour: `whoami`
+    reports "FEATRIX_API_KEY env var" instead of the config file, and the
+    config-discovery paths never run. That makes tests pass or fail depending on
+    whose machine they run on. Tests that want a key ask for the `env` fixture,
+    which supplies one explicitly.
+
+    test_live_api.py is exempt — it talks to the real API, where the ambient
+    credentials are the whole point.
+    """
+    if request.module.__name__ == "test_live_api":
+        return
+    for var in ("FEATRIX_API_KEY", "FFS_SERVER", "FFS_CLUSTER"):
+        monkeypatch.delenv(var, raising=False)
+
+
 @pytest.fixture
 def runner():
     return CliRunner()

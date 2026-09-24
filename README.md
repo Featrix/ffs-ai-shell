@@ -36,7 +36,7 @@ Search order:
 
 The file is JSON:
 ```json
-{"api_key": "sk_live_..."}
+{"api_key": "fx_..."}
 ```
 
 ## CLI
