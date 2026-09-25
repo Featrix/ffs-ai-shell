@@ -51,6 +51,10 @@ def create(state: ClientState, name, data_file, epochs, ignore_columns, priority
     else:
         console.print(f"[green]Model created:[/green] {fm.id}")
         console.print(f"Status: {fm.status}")
+        if priority:
+            # The tier is stamped at dispatch, not at create, so there is
+            # nothing to confirm yet — `foundation show` reports what landed.
+            console.print(f"Priority requested: {priority}")
         console.print(f"\nRun [bold]ffs model wait {fm.id}[/bold] to monitor training.")
 
 
@@ -110,12 +114,20 @@ def _show_one_model(state, fm):
     num_params = model_info.get("num_parameters") or model_info.get("n_parameters") or model_info.get("total_parameters")
     num_columns = model_info.get("num_columns")
 
+    # Live sessions carry no model_info/training_stats at all, so fm.dimensions
+    # is None for every trained model. The width the ES was actually built at
+    # is in optimal_es_config.d_model. Verified against the live API 2026-09-24.
+    es_config = session.get("optimal_es_config") or {}
+    dimensions = fm.dimensions or es_config.get("d_model")
+    priority_tier = session.get("priority_tier")
+
     if state.output_json:
         data = {
             "model_id": fm.id,
             "name": fm.name,
             "status": fm.status,
-            "dimensions": fm.dimensions,
+            "dimensions": dimensions,
+            "priority_tier": priority_tier,
             "epochs": fm.epochs,
             "final_loss": fm.final_loss,
             "compute_cluster": fm.compute_cluster,
@@ -133,7 +145,7 @@ def _show_one_model(state, fm):
         "Model ID": fm.id,
         "Name": fm.name or "(unnamed)",
         "Status": fm.status,
-        "Dimensions": fm.dimensions or "—",
+        "Dimensions": dimensions or "—",
         "Epochs": fm.epochs or "—",
         "Final Loss": f"{fm.final_loss:.4f}" if fm.final_loss else "—",
     }
@@ -142,6 +154,8 @@ def _show_one_model(state, fm):
     if num_columns:
         kv["Columns"] = str(num_columns)
     kv["Cluster"] = fm.compute_cluster or "—"
+    if priority_tier:
+        kv["Priority"] = priority_tier
 
     print_kv(kv)
     if predictors:
