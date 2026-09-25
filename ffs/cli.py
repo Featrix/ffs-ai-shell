@@ -18,7 +18,7 @@ from ffs.client import (
     repair_cwd,
     safe_cwd,
 )
-from ffs.click_ext import DYMGroup
+from ffs.click_ext import DYMGroup, HELP_OPTION_NAMES
 from ffs.output import print_json, print_kv, console
 from ffs import model_cmd
 from ffs import predictor_cmd
@@ -57,7 +57,12 @@ def _completions_installed():
     return False
 
 
-@click.group(cls=DYMGroup, invoke_without_command=True)
+@click.group(
+    cls=DYMGroup,
+    invoke_without_command=True,
+    # Inherited by every subcommand, so -h and -? work anywhere, not just here.
+    context_settings={"help_option_names": HELP_OPTION_NAMES},
+)
 @click.option("--server", envvar="FFS_SERVER", default="https://sphere-api.featrix.com", hidden=True, help="API server URL")
 @click.option("--cluster", envvar="FFS_CLUSTER", default=None, hidden=True, help="Compute cluster name")
 @click.option("--json", "output_json", is_flag=True, help="Output raw JSON")

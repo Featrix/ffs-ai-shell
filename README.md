@@ -53,6 +53,13 @@ ffs [global-options] <command> [subcommand] [options] [args]
 --quiet               Minimal output
 ```
 
+### Getting help
+```
+ffs help                     List every command (also: ffs ?, ffs -h)
+ffs help COMMAND             Help for one command, e.g. ffs help foundation predict
+ffs COMMAND --help           The same thing
+```
+
 ### Authentication
 ```
 ffs login [--global]                        Save API key (project-local or ~/.featrix)
@@ -73,7 +80,7 @@ ffs foundation extend MODEL_ID --data FILE [--epochs N]
 ffs foundation encode MODEL_ID RECORD_JSON [--short]
 ffs foundation predict MODEL_ID COLUMN RECORD_JSON [--predictor-id ID] [--foundation] [--explain]
 ffs foundation predict MODEL_ID COLUMN --file FILE
-ffs foundation publish MODEL_ID --org ORG --name NAME
+ffs foundation publish MODEL_ID [--name NAME] [--max-wait-time N] [--poll-interval N]
 ffs foundation unpublish MODEL_ID
 ffs foundation deprecate MODEL_ID --message MSG --expires DATE
 ffs foundation cancel MODEL_ID --yes [--reason TEXT]

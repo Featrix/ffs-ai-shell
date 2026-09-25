@@ -9,7 +9,7 @@ from ffs.click_ext import DYMGroup
 from ffs.client import pass_client, ClientState
 from featrixsphere.api.foundational_model import JOB_PRIORITIES
 
-from ffs.output import print_json, print_kv, print_list_table, console
+from ffs.output import print_json, print_kv, print_list_table, console, sdk_progress
 from ffs.predict_health import (
     FAILED_STATUSES,
     TERMINAL_STATUSES,
@@ -741,7 +741,10 @@ def publish(state: ClientState, model_id, name, max_wait_time, poll_interval):
     The org is derived from your API key — there is no --org option.
     """
     fm = state.client.foundational_model(model_id)
-    result = fm.publish(name=name, max_wait_time=max_wait_time, poll_interval=poll_interval)
+    # A publish runs for minutes with no output of its own; without this the
+    # command looks hung and people kill it.
+    with sdk_progress(not state.output_json and not state.quiet):
+        result = fm.publish(name=name, max_wait_time=max_wait_time, poll_interval=poll_interval)
     if state.output_json:
         print_json(result)
     else:

@@ -38,9 +38,20 @@ CREDIT_CSV = str(Path(__file__).parent / "credit-sklearn.csv")
 
 # Training the ES and then a predictor on 1000 rows. Generous, because a
 # queued job waits on org capacity before it even starts.
-ES_TIMEOUT = 45 * 60
-PREDICTOR_TIMEOUT = 45 * 60
+# Two separate budgets, because a flat wall-clock cap is wrong here: the first
+# run of this file timed out at 45 minutes having spent 20 of them waiting in
+# the org's job queue before training even started.
+QUEUE_TIMEOUT = 3 * 60 * 60     # no jobs scheduled yet — waiting for a GPU slot
+STALL_TIMEOUT = 30 * 60         # jobs exist but nothing has moved
 POLL_SECONDS = 10
+
+# Kept for the fixtures that still name them; both now mean "the queue budget".
+ES_TIMEOUT = QUEUE_TIMEOUT
+PREDICTOR_TIMEOUT = QUEUE_TIMEOUT
+
+TERMINAL_SESSION_STATUSES = frozenset(
+    {"done", "error", "failed", "cancelled", "aborted", "abandoned"}
+)
 
 # A real row from credit-sklearn.csv with the target column removed.
 SAMPLE_RECORD = {
@@ -107,17 +118,42 @@ def ffs_json(*args, timeout=300):
                     f"{exc}\n--- stdout ---\n{proc.stdout}")
 
 
-def wait_for_session(model_id, timeout):
-    """Poll until the session reaches a terminal state; return its final status."""
-    deadline = time.time() + timeout
-    last = None
-    while time.time() < deadline:
-        data = ffs_json("foundation", "show", model_id)
-        last = data.get("status")
-        if last in ("done", "error", "failed", "cancelled", "aborted", "abandoned"):
-            return last
+def wait_for_session(model_id, timeout=QUEUE_TIMEOUT):
+    """Poll until the session is terminal; return its final status.
+
+    Not a wall-clock cap. Sitting in the job queue is not a failure — it is the
+    normal state of a busy org — so a session with no jobs scheduled gets
+    `timeout` to reach a GPU. Once jobs exist, the budget becomes a stall
+    detector that resets on any observable movement (session status, job
+    status, reported progress) and only fires when nothing has changed for
+    STALL_TIMEOUT. Same contract the SDK uses for publish.
+    """
+    started = time.time()
+    last_movement = time.time()
+    seen = None
+
+    while True:
+        status = ffs_json("foundation", "show", model_id).get("status")
+        if status in TERMINAL_SESSION_STATUSES:
+            return status
+
+        jobs = ffs_json("foundation", "jobs", model_id).get("jobs") or []
+        snapshot = json.dumps([status, jobs], sort_keys=True, default=str)
+        if snapshot != seen:
+            seen, last_movement = snapshot, time.time()
+
+        if not jobs:
+            if time.time() - started > timeout:
+                pytest.fail(
+                    f"{model_id} never got a job scheduled in {timeout}s "
+                    f"(status {status!r}) — the org's queue is saturated"
+                )
+        elif time.time() - last_movement > STALL_TIMEOUT:
+            pytest.fail(
+                f"{model_id} made no progress for {STALL_TIMEOUT}s "
+                f"(status {status!r})\n{ffs('foundation', 'jobs', model_id).stdout}"
+            )
         time.sleep(POLL_SECONDS)
-    pytest.fail(f"{model_id} still {last!r} after {timeout}s")
 
 
 def predictor_status(model_id, target_column):
