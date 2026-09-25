@@ -58,8 +58,12 @@ ffs whoami
 
 ### Foundation Models
 
-ffs foundation create --name NAME --data FILE [--epochs N] [--ignore-columns "a,b"]
+ffs foundation create --name NAME --data FILE|URL [--epochs N] [--ignore-columns "a,b"]
   Create a new foundational model from CSV/JSON/Parquet.
+  --data takes a local file, an https:// link (public or presigned), or a
+  public s3:// URL; the server fetches URLs, nothing is uploaded.
+  Featrix splits train/validation itself unless the data has a
+  __featrix_split_segment column (train / validation / test per row).
   JSON output: {"model_id": "...", "status": "..."}
   Exit: 0 on success
 

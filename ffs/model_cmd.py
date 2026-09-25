@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import click
 
 from ffs.click_ext import DYMGroup
+from ffs.data_source import DataSource, is_url, link_expiry
 from ffs.client import pass_client, ClientState
 from featrixsphere.api.foundational_model import JOB_PRIORITIES
 
@@ -28,7 +29,10 @@ def model():
 
 @model.command()
 @click.option("--name", required=True, help="Model name")
-@click.option("--data", "data_file", required=True, type=click.Path(exists=True), help="CSV/Parquet/JSON file")
+@click.option("--data", "data_file", required=True, type=DataSource(),
+              help="CSV/Parquet/JSON file, or an https:// link (public or presigned) / public s3:// URL. "
+                   "To choose the train/validation split yourself, add a __featrix_split_segment "
+                   "column (train / validation / test).")
 @click.option("--epochs", type=int, default=None, help="Training epochs (auto if omitted)")
 @click.option("--ignore-columns", default=None, help="Comma-separated columns to ignore")
 @click.option("--priority", type=click.Choice(JOB_PRIORITIES), default=None,
@@ -37,6 +41,11 @@ def model():
 def create(state: ClientState, name, data_file, epochs, ignore_columns, priority):
     """Create a new foundational model from data."""
     ignore = [c.strip() for c in ignore_columns.split(",")] if ignore_columns else None
+    expires = link_expiry(data_file) if is_url(data_file) else None
+    if expires is not None and not state.output_json:
+        # The server fetches the file when the job reaches a node -- a queued
+        # job with a short-lived link can find it expired.
+        console.print(f"Presigned link expires {expires:%Y-%m-%d %H:%M} UTC")
     kwargs = {"priority": priority} if priority else {}
     fm = state.client.create_foundational_model(
         name=name,
