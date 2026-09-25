@@ -743,11 +743,13 @@ def publish(state: ClientState, model_id, name, max_wait_time, poll_interval):
     fm = state.client.foundational_model(model_id)
     # A publish runs for minutes with no output of its own; without this the
     # command looks hung and people kill it.
-    with sdk_progress(not state.output_json and not state.quiet):
+    with sdk_progress(not state.output_json and not state.quiet) as progress:
         result = fm.publish(name=name, max_wait_time=max_wait_time, poll_interval=poll_interval)
     if state.output_json:
         print_json(result)
-    else:
+    elif not progress.emitted:
+        # When progress streamed, its last line already named the published
+        # path; repeating it just prints the same 100 characters twice.
         console.print(f"[green]Published:[/green] {result.get('published_path', model_id)}")
 
 

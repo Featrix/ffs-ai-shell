@@ -17,7 +17,12 @@ class _ConsoleLogHandler(logging.Handler):
     containing "[" would otherwise be eaten as rich markup, or raise.
     """
 
+    def __init__(self):
+        super().__init__()
+        self.emitted = False
+
     def emit(self, record):
+        self.emitted = True
         console.print(record.getMessage(), style="dim", markup=False, highlight=False)
 
 
@@ -30,19 +35,22 @@ def sdk_progress(enabled: bool = True):
     logging.info. ffs configures no logging at all, so those lines went nowhere
     and the command sat silent until it finished, which is indistinguishable
     from a hang.
+
+    Yields the handler, whose ``emitted`` says whether anything was printed —
+    so a caller can skip a summary line the streamed output already gave.
     """
+    handler = _ConsoleLogHandler()
     if not enabled:
-        yield
+        yield handler
         return
 
     logger = logging.getLogger("featrixsphere")
-    handler = _ConsoleLogHandler()
     previous_level, previous_propagate = logger.level, logger.propagate
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
     logger.propagate = False
     try:
-        yield
+        yield handler
     finally:
         logger.removeHandler(handler)
         logger.setLevel(previous_level)
