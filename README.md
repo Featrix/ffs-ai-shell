@@ -69,7 +69,7 @@ ffs upgrade                                 Upgrade featrix-shell and featrixsph
 
 ### Foundation (Foundational Models / Embedding Spaces)
 ```
-ffs foundation create --name NAME --data FILE [--epochs N] [--ignore-columns COL,COL] [--priority urgent|regular|low]
+ffs foundation create --name NAME --data FILE|URL [--epochs N] [--ignore-columns COL,COL] [--priority urgent|regular|low]
 ffs foundation list [--prefix PREFIX]
 ffs foundation show MODEL_ID
 ffs foundation columns MODEL_ID
